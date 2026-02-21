@@ -24,6 +24,7 @@ interface ParsedArgs {
   skipBuild: boolean;
   skipConvex: boolean;
   cdn: boolean;
+  dev: boolean;
 }
 
 function parseArgs(args: string[]): ParsedArgs {
@@ -34,6 +35,7 @@ function parseArgs(args: string[]): ParsedArgs {
     skipBuild: false,
     skipConvex: false,
     cdn: false,
+    dev: false,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -50,6 +52,8 @@ function parseArgs(args: string[]): ParsedArgs {
       result.skipConvex = true;
     } else if (arg === "--cdn") {
       result.cdn = true;
+    } else if (arg === "--dev") {
+      result.dev = true;
     }
   }
 
@@ -69,16 +73,25 @@ Options:
       --skip-build            Skip the build step (use existing dist)
       --skip-convex           Skip Convex backend deployment
       --cdn                   Upload non-HTML assets to convex-fs CDN
+      --dev                   Deploy to dev environment (skip backend deploy, upload without --prod)
   -h, --help                  Show this help message
 
-Deployment Flow:
+Deployment Flow (production, default):
   1. Build frontend with production VITE_CONVEX_URL
   2. Deploy Convex backend (npx convex deploy)
   3. Deploy static files to Convex storage
 
+Deployment Flow (--dev):
+  1. Build frontend with dev VITE_CONVEX_URL (from .env.local)
+  2. Skip Convex backend deployment (use running 'npx convex dev')
+  3. Deploy static files to dev Convex storage
+
 Examples:
-  # Full deployment
+  # Full production deployment
   npx @convex-dev/self-hosting deploy
+
+  # Deploy to dev environment
+  npx @convex-dev/self-hosting deploy --dev
 
   # Skip build (if already built)
   npx @convex-dev/self-hosting deploy --skip-build
@@ -118,12 +131,42 @@ function getConvexProdUrl(): string | null {
 }
 
 /**
+ * Get the dev Convex URL (from running `npx convex dev`)
+ */
+function getConvexDevUrl(): string | null {
+  try {
+    const result = execSync("npx convex env get CONVEX_CLOUD_URL", {
+      stdio: "pipe",
+      encoding: "utf-8",
+    });
+    return result.trim() || null;
+  } catch {
+    // Fall back to env files
+  }
+
+  // Try .env.local (standard location for dev URL)
+  const envFiles = [".env.local", ".env.development.local", ".env.development"];
+  for (const envFile of envFiles) {
+    if (existsSync(envFile)) {
+      const content = readFileSync(envFile, "utf-8");
+      const match = content.match(/(?:VITE_)?CONVEX_URL=(.+)/);
+      if (match) {
+        return match[1].trim();
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
  * Run the Convex storage upload flow
  */
 async function uploadToConvexStorage(
   distDir: string,
   componentName: string,
   useCdn: boolean,
+  prod: boolean,
 ): Promise<boolean> {
   console.log("");
   console.log(useCdn
@@ -138,8 +181,11 @@ async function uploadToConvexStorage(
     distDir,
     "--component",
     componentName,
-    "--prod",
   ];
+
+  if (prod) {
+    uploadArgs.push("--prod");
+  }
 
   if (useCdn) {
     uploadArgs.push("--cdn");
@@ -158,20 +204,36 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  const isDev = args.dev;
+
+  // --dev implies --skip-convex (backend is managed by `npx convex dev`)
+  if (isDev) {
+    args.skipConvex = true;
+  }
+
   console.log("");
-  console.log("🚀 Convex + Static Files Deployment");
+  console.log(isDev
+    ? "🚀 Convex + Static Files Deployment (dev)"
+    : "🚀 Convex + Static Files Deployment");
   console.log("═══════════════════════════════════════════════════════════");
 
   const startTime = Date.now();
 
-  // Step 1: Get production Convex URL (needed for build)
+  // Step 1: Get Convex URL (needed for build)
   console.log("");
-  console.log("Step 1: Getting production Convex URL...");
+  console.log(isDev
+    ? "Step 1: Getting dev Convex URL..."
+    : "Step 1: Getting production Convex URL...");
 
-  let convexUrl = getConvexProdUrl();
+  let convexUrl = isDev ? getConvexDevUrl() : getConvexProdUrl();
 
   if (!convexUrl && !args.skipConvex) {
     console.log("   No production deployment found. Will get URL after deploying backend.");
+  } else if (!convexUrl && isDev) {
+    console.error("");
+    console.error("❌ Could not determine dev Convex URL");
+    console.error("   Make sure 'npx convex dev' is running and .env.local contains CONVEX_URL");
+    process.exit(1);
   } else if (convexUrl) {
     console.log(`   ✓ ${convexUrl}`);
   }
@@ -272,7 +334,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const staticDeploySuccess = await uploadToConvexStorage(distDir, args.component, args.cdn);
+  const staticDeploySuccess = await uploadToConvexStorage(distDir, args.component, args.cdn, !isDev);
 
   if (!staticDeploySuccess) {
     console.error("");
@@ -290,7 +352,8 @@ async function main(): Promise<void> {
 
   // Show Convex site URL
   try {
-    const result = execSync("npx convex env get CONVEX_CLOUD_URL --prod", {
+    const envFlag = isDev ? "" : "--prod";
+    const result = execSync(`npx convex env get CONVEX_CLOUD_URL ${envFlag}`, {
       stdio: "pipe",
       encoding: "utf-8",
     });
