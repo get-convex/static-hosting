@@ -40,7 +40,7 @@ function getSetupHtml(): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Convex Self Hosting</title>
+  <title>Convex Static Hosting</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -97,14 +97,14 @@ function getSetupHtml(): string {
   <div class="step">
     <span class="step-num">2</span>
     <strong>Deploy your static files</strong>
-    <pre>npx @convex-dev/self-hosting deploy</pre>
+    <pre>npx @convex-dev/static-hosting deploy</pre>
   </div>
 
   <p>Or deploy everything in one command:</p>
   <pre>npm run deploy</pre>
 
   <p style="margin-top: 32px; color: #666; font-size: 14px;">
-    Learn more at <a href="https://github.com/get-convex/self-hosting">github.com/get-convex/self-hosting</a>
+    Learn more at <a href="https://github.com/get-convex/static-hosting">github.com/get-convex/static-hosting</a>
   </p>
 </body>
 </html>`;
@@ -149,16 +149,16 @@ function isHashedAsset(path: string): boolean {
  * ```typescript
  * // In your convex/http.ts
  * import { httpRouter } from "convex/server";
- * import { registerStaticRoutes } from "@convex-dev/self-hosting";
+ * import { registerStaticRoutes } from "@convex-dev/static-hosting";
  * import { components } from "./_generated/api";
  *
  * const http = httpRouter();
  *
  * // Serve static files at root
- * registerStaticRoutes(http, components.selfHosting);
+ * registerStaticRoutes(http, components.staticHosting);
  *
  * // Or serve at a specific path prefix
- * registerStaticRoutes(http, components.selfHosting, {
+ * registerStaticRoutes(http, components.staticHosting, {
  *   pathPrefix: "/app",
  * });
  *
@@ -337,11 +337,11 @@ export function registerStaticRoutes(
  * @example
  * ```typescript
  * // In your convex/staticHosting.ts
- * import { exposeUploadApi } from "@convex-dev/self-hosting";
+ * import { exposeUploadApi } from "@convex-dev/static-hosting";
  * import { components } from "./_generated/api";
  *
  * export const { generateUploadUrl, recordAsset, gcOldAssets, listAssets } =
- *   exposeUploadApi(components.selfHosting);
+ *   exposeUploadApi(components.staticHosting);
  * ```
  *
  * Then deploy using:
@@ -498,13 +498,13 @@ export function exposeUploadApi(component: ComponentApi) {
  * @example
  * ```typescript
  * // In your convex/staticHosting.ts
- * import { exposeUploadApi, exposeDeploymentQuery } from "@convex-dev/self-hosting";
+ * import { exposeUploadApi, exposeDeploymentQuery } from "@convex-dev/static-hosting";
  * import { components } from "./_generated/api";
  *
  * export const { generateUploadUrl, recordAsset, gcOldAssets, listAssets } =
- *   exposeUploadApi(components.selfHosting);
+ *   exposeUploadApi(components.staticHosting);
  *
- * export const { getCurrentDeployment } = exposeDeploymentQuery(components.selfHosting);
+ * export const { getCurrentDeployment } = exposeDeploymentQuery(components.staticHosting);
  * ```
  */
 export function exposeDeploymentQuery(component: ComponentApi) {
@@ -530,7 +530,7 @@ export function exposeDeploymentQuery(component: ComponentApi) {
  * @example
  * ```typescript
  * // In your React app's main.tsx
- * import { getConvexUrl } from "@convex-dev/self-hosting";
+ * import { getConvexUrl } from "@convex-dev/static-hosting";
  *
  * const convexUrl = import.meta.env.VITE_CONVEX_URL ?? getConvexUrl();
  * const convex = new ConvexReactClient(convexUrl);

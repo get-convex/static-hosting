@@ -1,7 +1,7 @@
 import { defineApp } from "convex/server";
-import selfHosting from "@convex-dev/self-hosting/convex.config.js";
+import staticHosting from "@convex-dev/static-hosting/convex.config.js";
 
 const app = defineApp();
-app.use(selfHosting);
+app.use(staticHosting);
 
 export default app;

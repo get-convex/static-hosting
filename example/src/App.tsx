@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { UpdateBanner } from "@convex-dev/self-hosting/react";
+import { UpdateBanner } from "@convex-dev/static-hosting/react";
 import { api } from "../convex/_generated/api";
 import "./App.css";
 
@@ -17,7 +17,7 @@ function App() {
 
       <header className="header">
         <h1>🚀 Convex Static Hosting</h1>
-        <p className="subtitle">Self-hosted React app on Convex</p>
+        <p className="subtitle">Statically hosted React app on Convex</p>
       </header>
 
       <main className="main">

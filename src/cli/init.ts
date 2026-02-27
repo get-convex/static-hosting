@@ -3,13 +3,13 @@
  * Output integration instructions for LLMs.
  *
  * Usage:
- *   npx @convex-dev/self-hosting init
+ *   npx @convex-dev/static-hosting init
  */
 
 const instructions = `
-# Convex Self Hosting - Integration Instructions
+# Convex Static Hosting - Integration Instructions
 
-You are integrating the @convex-dev/self-hosting component into a Convex app.
+You are integrating the @convex-dev/static-hosting component into a Convex app.
 This component enables hosting static files (React/Vite apps) directly on Convex.
 
 ## What This Component Does
@@ -27,10 +27,10 @@ This component enables hosting static files (React/Vite apps) directly on Convex
 
 \`\`\`typescript
 import { defineApp } from "convex/server";
-import selfHosting from "@convex-dev/self-hosting/convex.config";
+import staticHosting from "@convex-dev/static-hosting/convex.config";
 
 const app = defineApp();
-app.use(selfHosting);
+app.use(staticHosting);
 
 export default app;
 \`\`\`
@@ -42,31 +42,31 @@ import { components } from "./_generated/api";
 import {
   exposeUploadApi,
   exposeDeploymentQuery,
-} from "@convex-dev/self-hosting";
+} from "@convex-dev/static-hosting";
 
 // Internal functions for secure uploads (only callable via CLI)
 export const { generateUploadUrl, recordAsset, gcOldAssets, listAssets } =
-  exposeUploadApi(components.selfHosting);
+  exposeUploadApi(components.staticHosting);
 
 // Public query for live reload notifications
 export const { getCurrentDeployment } =
-  exposeDeploymentQuery(components.selfHosting);
+  exposeDeploymentQuery(components.staticHosting);
 \`\`\`
 
 ### 3. convex/http.ts (create or modify)
 
 \`\`\`typescript
 import { httpRouter } from "convex/server";
-import { registerStaticRoutes } from "@convex-dev/self-hosting";
+import { registerStaticRoutes } from "@convex-dev/static-hosting";
 import { components } from "./_generated/api";
 
 const http = httpRouter();
 
 // Option A: Serve at root (if no other HTTP routes)
-registerStaticRoutes(http, components.selfHosting);
+registerStaticRoutes(http, components.staticHosting);
 
 // Option B: Serve at /app/ prefix (recommended if you have API routes)
-// registerStaticRoutes(http, components.selfHosting, {
+// registerStaticRoutes(http, components.staticHosting, {
 //   pathPrefix: "/app",
 // });
 
@@ -82,7 +82,7 @@ export default http;
 {
   "scripts": {
     "build": "vite build",
-    "deploy:static": "npx @convex-dev/self-hosting upload --build --prod"
+    "deploy:static": "npx @convex-dev/static-hosting upload --build --prod"
   }
 }
 \`\`\`
@@ -95,7 +95,7 @@ has the dev URL.
 ### 5. src/App.tsx (optional: add live reload banner)
 
 \`\`\`typescript
-import { UpdateBanner } from "@convex-dev/self-hosting/react";
+import { UpdateBanner } from "@convex-dev/static-hosting/react";
 import { api } from "../convex/_generated/api";
 
 function App() {
@@ -116,7 +116,7 @@ function App() {
 
 Or use the hook for custom UI:
 \`\`\`typescript
-import { useDeploymentUpdates } from "@convex-dev/self-hosting/react";
+import { useDeploymentUpdates } from "@convex-dev/static-hosting/react";
 import { api } from "../convex/_generated/api";
 
 function App() {
@@ -151,13 +151,13 @@ For development/testing:
 npx convex dev --once
 
 # Deploy static files to dev (omit --prod)
-npx @convex-dev/self-hosting upload --build
+npx @convex-dev/static-hosting upload --build
 \`\`\`
 
 ## CLI Reference
 
 \`\`\`bash
-npx @convex-dev/self-hosting upload [options]
+npx @convex-dev/static-hosting upload [options]
 
 Options:
   -d, --dist <path>        Path to dist directory (default: ./dist)

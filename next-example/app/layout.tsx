@@ -1,6 +1,6 @@
 export const metadata = {
   title: "Next.js on Convex",
-  description: "Next.js app hosted on Convex via self-hosting component",
+  description: "Next.js app hosted on Convex via static-hosting component",
 };
 
 export default function RootLayout({

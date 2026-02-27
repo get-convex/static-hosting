@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * CLI for Convex Self Hosting
+ * CLI for Convex Static Hosting
  *
  * Commands:
  *   deploy              One-shot deployment (Convex backend + static files)
@@ -55,10 +55,10 @@ async function main() {
 
 function printHelp() {
   console.log(`
-Convex Self Hosting CLI
+Convex Static Hosting CLI
 
 Usage:
-  npx @convex-dev/self-hosting <command> [options]
+  npx @convex-dev/static-hosting <command> [options]
 
 Commands:
   setup               Interactive setup wizard (creates files, configures deployment)
@@ -69,13 +69,13 @@ Commands:
 
 Examples:
   # Interactive setup (recommended for first-time users)
-  npx @convex-dev/self-hosting setup
+  npx @convex-dev/static-hosting setup
 
   # One-shot deployment
-  npx @convex-dev/self-hosting deploy
+  npx @convex-dev/static-hosting deploy
 
   # Upload only (no Convex backend deploy)
-  npx @convex-dev/self-hosting upload --build --prod
+  npx @convex-dev/static-hosting upload --build --prod
 
 Run '<command> --help' for more information on a specific command.
 `);
@@ -83,16 +83,16 @@ Run '<command> --help' for more information on a specific command.
 
 function printInitInstructions() {
   console.log(`
-📦 Convex Self Hosting
+📦 Convex Static Hosting
 
 Quick Start:
-  npx @convex-dev/self-hosting setup    # Interactive setup wizard
+  npx @convex-dev/static-hosting setup    # Interactive setup wizard
 
 For LLMs:
   Read INTEGRATION.md in this package for complete integration instructions
 
 Manual Setup:
-  See README.md at https://github.com/get-convex/self-hosting#readme
+  See README.md at https://github.com/get-convex/static-hosting#readme
 
 This component hosts your static files in Convex storage and serves them via HTTP actions.
 `);

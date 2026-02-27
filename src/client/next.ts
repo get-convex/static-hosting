@@ -38,11 +38,11 @@ const MIME_TYPES: Record<string, string> = {
  * ```typescript
  * // convex/http.ts
  * import { httpRouter } from "convex/server";
- * import { registerNextRoutes } from "@convex-dev/self-hosting/next";
+ * import { registerNextRoutes } from "@convex-dev/static-hosting/next";
  * import { components, internal } from "./_generated/api";
  *
  * const http = httpRouter();
- * registerNextRoutes(http, components.selfHosting, internal._generatedNextServer.handle);
+ * registerNextRoutes(http, components.staticHosting, internal._generatedNextServer.handle);
  * export default http;
  * ```
  */
@@ -52,8 +52,12 @@ export function registerNextRoutes(
   actionRef: FunctionReference<"action", "internal", Record<string, unknown>, unknown>,
   {
     pathPrefix = "/",
+    warmup = true,
   }: {
     pathPrefix?: string;
+    /** Inject a warmup script into static HTML pages to pre-boot the Node.js
+     *  NextServer in the background. Defaults to true. */
+    warmup?: boolean;
   } = {},
 ) {
   const normalizedPrefix =
@@ -78,6 +82,20 @@ export function registerNextRoutes(
     // Remove prefix if present
     if (normalizedPrefix && path.startsWith(normalizedPrefix)) {
       path = path.slice(normalizedPrefix.length) || "/";
+    }
+
+    // Warmup endpoint: boots the Node.js action in the background
+    if (warmup && path === "/__warmup") {
+      try {
+        await (ctx as { runAction: (ref: typeof actionRef, args: Record<string, unknown>) => Promise<unknown> }).runAction(actionRef, {
+          url: `${url.origin}/`,
+          method: "GET",
+          headers: [],
+        });
+      } catch {
+        // Warmup failure is non-critical
+      }
+      return new Response(null, { status: 204 });
     }
 
     // Serve /_next/static/* from Convex storage (fast, V8 runtime)
@@ -136,7 +154,26 @@ export function registerNextRoutes(
         ([key]) => !hopByHopHeaders.has(key.toLowerCase()),
       );
 
-      return new Response(result.body.byteLength > 0 ? result.body : null, {
+      let responseBody: ArrayBuffer | string | null =
+        result.body.byteLength > 0 ? result.body : null;
+
+      // Inject warmup script into HTML responses so subsequent pages
+      // don't need to wait for a cold start
+      if (warmup && responseBody) {
+        const contentType = filteredHeaders.find(
+          ([k]) => k.toLowerCase() === "content-type",
+        );
+        if (contentType && contentType[1].includes("text/html")) {
+          const html = new TextDecoder().decode(result.body);
+          const warmupUrl = normalizedPrefix
+            ? `${normalizedPrefix}/__warmup`
+            : "/__warmup";
+          const script = `<script>fetch("${warmupUrl}").catch(()=>{})</script>`;
+          responseBody = html.replace("</head>", `${script}</head>`);
+        }
+      }
+
+      return new Response(responseBody, {
         status: result.status,
         headers: filteredHeaders as [string, string][],
       });

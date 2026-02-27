@@ -34,15 +34,15 @@ const MIME_TYPES = {
  * ```typescript
  * // convex/http.ts
  * import { httpRouter } from "convex/server";
- * import { registerNextRoutes } from "@convex-dev/self-hosting/next";
+ * import { registerNextRoutes } from "@convex-dev/static-hosting/next";
  * import { components, internal } from "./_generated/api";
  *
  * const http = httpRouter();
- * registerNextRoutes(http, components.selfHosting, internal._generatedNextServer.handle);
+ * registerNextRoutes(http, components.staticHosting, internal._generatedNextServer.handle);
  * export default http;
  * ```
  */
-export function registerNextRoutes(http, component, actionRef, { pathPrefix = "/", } = {}) {
+export function registerNextRoutes(http, component, actionRef, { pathPrefix = "/", warmup = true, } = {}) {
     const normalizedPrefix = pathPrefix === "/" ? "" : pathPrefix.replace(/\/$/, "");
     // Hop-by-hop headers that must not be forwarded through proxies
     const hopByHopHeaders = new Set([
@@ -61,6 +61,20 @@ export function registerNextRoutes(http, component, actionRef, { pathPrefix = "/
         // Remove prefix if present
         if (normalizedPrefix && path.startsWith(normalizedPrefix)) {
             path = path.slice(normalizedPrefix.length) || "/";
+        }
+        // Warmup endpoint: boots the Node.js action in the background
+        if (warmup && path === "/__warmup") {
+            try {
+                await ctx.runAction(actionRef, {
+                    url: `${url.origin}/`,
+                    method: "GET",
+                    headers: [],
+                });
+            }
+            catch {
+                // Warmup failure is non-critical
+            }
+            return new Response(null, { status: 204 });
         }
         // Serve /_next/static/* from Convex storage (fast, V8 runtime)
         if (path.startsWith("/_next/static/")) {
@@ -100,7 +114,21 @@ export function registerNextRoutes(http, component, actionRef, { pathPrefix = "/
             }));
             // Filter out hop-by-hop headers
             const filteredHeaders = result.headers.filter(([key]) => !hopByHopHeaders.has(key.toLowerCase()));
-            return new Response(result.body.byteLength > 0 ? result.body : null, {
+            let responseBody = result.body.byteLength > 0 ? result.body : null;
+            // Inject warmup script into HTML responses so subsequent pages
+            // don't need to wait for a cold start
+            if (warmup && responseBody) {
+                const contentType = filteredHeaders.find(([k]) => k.toLowerCase() === "content-type");
+                if (contentType && contentType[1].includes("text/html")) {
+                    const html = new TextDecoder().decode(result.body);
+                    const warmupUrl = normalizedPrefix
+                        ? `${normalizedPrefix}/__warmup`
+                        : "/__warmup";
+                    const script = `<script>fetch("${warmupUrl}").catch(()=>{})</script>`;
+                    responseBody = html.replace("</head>", `${script}</head>`);
+                }
+            }
+            return new Response(responseBody, {
                 status: result.status,
                 headers: filteredHeaders,
             });

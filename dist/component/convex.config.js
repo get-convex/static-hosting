@@ -1,3 +1,3 @@
 import { defineComponent } from "convex/server";
-export default defineComponent("selfHosting");
+export default defineComponent("staticHosting");
 //# sourceMappingURL=convex.config.js.map

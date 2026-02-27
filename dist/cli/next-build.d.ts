@@ -10,7 +10,7 @@
  * 5. Ensures convex.json has node.externalPackages: ["next"]
  *
  * Usage:
- *   npx @convex-dev/self-hosting next-build [options]
+ *   npx @convex-dev/static-hosting next-build [options]
  *
  * Options:
  *   --skip-build          Skip running `next build`

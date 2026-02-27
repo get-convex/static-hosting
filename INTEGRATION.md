@@ -1,19 +1,19 @@
-# Integration Guide: @convex-dev/self-hosting
+# Integration Guide: @convex-dev/static-hosting
 
-A Convex component that enables self-hosting static React/Vite apps using Convex HTTP actions and file storage. No external hosting provider required.
+A Convex component that enables hosting static React/Vite apps using Convex HTTP actions and file storage. No external hosting provider required.
 
 ## Quick Start
 
 ### Step 1: Install
 ```bash
-npm install @convex-dev/self-hosting
+npm install @convex-dev/static-hosting
 ```
 
 ### Step 2: Setup (Choose One)
 
 #### Option A: Automated Setup (Recommended)
 ```bash
-npx @convex-dev/self-hosting setup
+npx @convex-dev/static-hosting setup
 ```
 Interactive wizard that creates all necessary files.
 
@@ -27,10 +27,10 @@ See Manual Setup section below.
 #### 1. convex/convex.config.ts
 ```typescript
 import { defineApp } from "convex/server";
-import selfHosting from "@convex-dev/self-hosting/convex.config";
+import staticHosting from "@convex-dev/static-hosting/convex.config";
 
 const app = defineApp();
-app.use(selfHosting);
+app.use(staticHosting);
 
 export default app;
 ```
@@ -41,30 +41,30 @@ import { components } from "./_generated/api";
 import {
   exposeUploadApi,
   exposeDeploymentQuery,
-} from "@convex-dev/self-hosting";
+} from "@convex-dev/static-hosting";
 
 // Internal functions for secure uploads (CLI only)
 export const { generateUploadUrl, recordAsset, gcOldAssets, listAssets } =
-  exposeUploadApi(components.selfHosting);
+  exposeUploadApi(components.staticHosting);
 
 // Public query for live reload notifications
 export const { getCurrentDeployment } =
-  exposeDeploymentQuery(components.selfHosting);
+  exposeDeploymentQuery(components.staticHosting);
 ```
 
 #### 3. convex/http.ts
 ```typescript
 import { httpRouter } from "convex/server";
-import { registerStaticRoutes } from "@convex-dev/self-hosting";
+import { registerStaticRoutes } from "@convex-dev/static-hosting";
 import { components } from "./_generated/api";
 
 const http = httpRouter();
 
 // Serve static files at root with SPA fallback
-registerStaticRoutes(http, components.selfHosting);
+registerStaticRoutes(http, components.staticHosting);
 
 // Or serve at a path prefix (recommended if you have API routes):
-// registerStaticRoutes(http, components.selfHosting, {
+// registerStaticRoutes(http, components.staticHosting, {
 //   pathPrefix: "/app",
 //   spaFallback: true,
 // });
@@ -78,7 +78,7 @@ Add a deploy script for easy deployments:
 ```json
 {
   "scripts": {
-    "deploy": "npx @convex-dev/self-hosting deploy"
+    "deploy": "npx @convex-dev/static-hosting deploy"
   }
 }
 ```
@@ -87,17 +87,17 @@ Add a deploy script for easy deployments:
 
 ```bash
 # Interactive setup wizard
-npx @convex-dev/self-hosting setup
+npx @convex-dev/static-hosting setup
 
 # One-shot deployment (backend + static files)
-npx @convex-dev/self-hosting deploy
+npx @convex-dev/static-hosting deploy
 
 # Upload static files only (after building)
-npx @convex-dev/self-hosting upload --build --prod
+npx @convex-dev/static-hosting upload --build --prod
 
 # Traditional two-step deployment
 npx convex deploy                                      # Deploy backend
-npx @convex-dev/self-hosting upload --build --prod  # Deploy static files
+npx @convex-dev/static-hosting upload --build --prod  # Deploy static files
 ```
 
 ## Deployment Workflow
@@ -105,10 +105,10 @@ npx @convex-dev/self-hosting upload --build --prod  # Deploy static files
 ### First Time Setup
 ```bash
 # 1. Install
-npm install @convex-dev/self-hosting
+npm install @convex-dev/static-hosting
 
 # 2. Run setup wizard
-npx @convex-dev/self-hosting setup
+npx @convex-dev/static-hosting setup
 
 # 3. Initialize Convex (if not already done)
 npx convex dev --once
@@ -148,11 +148,11 @@ npm install convex-fs
 #### 2. convex/convex.config.ts
 ```typescript
 import { defineApp } from "convex/server";
-import selfHosting from "@convex-dev/self-hosting/convex.config";
+import staticHosting from "@convex-dev/static-hosting/convex.config";
 import fs from "convex-fs/convex.config";
 
 const app = defineApp();
-app.use(selfHosting);
+app.use(staticHosting);
 app.use(fs);
 
 export default app;
@@ -161,7 +161,7 @@ export default app;
 #### 3. convex/http.ts
 ```typescript
 import { httpRouter } from "convex/server";
-import { registerStaticRoutes } from "@convex-dev/self-hosting";
+import { registerStaticRoutes } from "@convex-dev/static-hosting";
 import { registerRoutes } from "convex-fs";
 import { components } from "./_generated/api";
 
@@ -174,7 +174,7 @@ registerRoutes(http, components.fs, {
 });
 
 // Register static file serving with CDN redirect
-registerStaticRoutes(http, components.selfHosting, {
+registerStaticRoutes(http, components.staticHosting, {
   cdnBaseUrl: (req) => `${new URL(req.url).origin}/fs/blobs`,
 });
 
@@ -187,16 +187,16 @@ import { components } from "./_generated/api";
 import {
   exposeUploadApi,
   exposeDeploymentQuery,
-} from "@convex-dev/self-hosting";
+} from "@convex-dev/static-hosting";
 import { internalAction } from "./_generated/server";
 import { v } from "convex/values";
 import { del } from "convex-fs";
 
 export const { generateUploadUrl, recordAsset, gcOldAssets, listAssets } =
-  exposeUploadApi(components.selfHosting);
+  exposeUploadApi(components.staticHosting);
 
 export const { getCurrentDeployment } =
-  exposeDeploymentQuery(components.selfHosting);
+  exposeDeploymentQuery(components.staticHosting);
 
 // Thin action wrapper to delete old CDN blobs during garbage collection
 export const deleteCdnBlobs = internalAction({
@@ -214,17 +214,17 @@ export const deleteCdnBlobs = internalAction({
 #### 5. Deploy with --cdn flag
 ```bash
 # One-shot deployment with CDN
-npx @convex-dev/self-hosting deploy --cdn
+npx @convex-dev/static-hosting deploy --cdn
 
 # Or upload only with CDN
-npx @convex-dev/self-hosting upload --cdn --prod
+npx @convex-dev/static-hosting upload --cdn --prod
 ```
 
 ### CDN Deploy Script
 ```json
 {
   "scripts": {
-    "deploy": "npx @convex-dev/self-hosting deploy --cdn"
+    "deploy": "npx @convex-dev/static-hosting deploy --cdn"
   }
 }
 ```
@@ -235,7 +235,7 @@ Add a banner that notifies users when a new deployment is available:
 
 ```typescript
 // In your src/App.tsx or main component
-import { UpdateBanner } from "@convex-dev/self-hosting/react";
+import { UpdateBanner } from "@convex-dev/static-hosting/react";
 import { api } from "../convex/_generated/api";
 
 function App() {
@@ -254,7 +254,7 @@ function App() {
 
 Or use the hook for custom UI:
 ```typescript
-import { useDeploymentUpdates } from "@convex-dev/self-hosting/react";
+import { useDeploymentUpdates } from "@convex-dev/static-hosting/react";
 import { api } from "../convex/_generated/api";
 
 const { updateAvailable, reload, dismiss } = useDeploymentUpdates(
@@ -279,16 +279,16 @@ This means unauthorized users cannot upload files, even if they know your Convex
 Always use the `--build` flag when deploying:
 ```bash
 # ✅ Correct - CLI sets VITE_CONVEX_URL for target environment
-npx @convex-dev/self-hosting deploy
+npx @convex-dev/static-hosting deploy
 
 # ❌ Wrong - uses dev URL from .env.local
-npm run build && npx @convex-dev/self-hosting upload --prod
+npm run build && npx @convex-dev/static-hosting upload --prod
 ```
 
 ### "Cannot find module convex.config"
 Make sure you've installed the package and it's listed in `package.json`:
 ```bash
-npm install @convex-dev/self-hosting
+npm install @convex-dev/static-hosting
 ```
 
 ### HTTP routes not working (404s)
@@ -298,7 +298,7 @@ npm install @convex-dev/self-hosting
 ### Component name mismatch
 Default component name is `staticHosting`. If you named your file differently or used a different component name in config, specify it:
 ```bash
-npx @convex-dev/self-hosting upload --component myCustomName
+npx @convex-dev/static-hosting upload --component myCustomName
 ```
 
 ## API Reference
@@ -326,7 +326,7 @@ Browser-only function to derive Convex URL from `.convex.site` hostname.
 
 **Usage**:
 ```typescript
-import { getConvexUrl } from "@convex-dev/self-hosting";
+import { getConvexUrl } from "@convex-dev/static-hosting";
 
 const convexUrl = import.meta.env.VITE_CONVEX_URL ?? getConvexUrl();
 ```

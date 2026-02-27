@@ -11,7 +11,7 @@ const modules = import.meta.glob("./component/**/*.ts");
  */
 export function register(
   t: TestConvex<SchemaDefinition<GenericSchema, boolean>>,
-  name: string = "selfHosting",
+  name: string = "staticHosting",
 ) {
   t.registerComponent(name, schema, modules);
 }

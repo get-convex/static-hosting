@@ -4,7 +4,7 @@ import { anyApi, type ApiFromModules } from "convex/server";
 import { components, initConvexTest } from "./setup.test.js";
 
 export const { generateUploadUrl, recordAsset, gcOldAssets, listAssets } =
-  exposeUploadApi(components.selfHosting);
+  exposeUploadApi(components.staticHosting);
 
 const testApi = (
   anyApi as unknown as ApiFromModules<{

@@ -1,10 +1,10 @@
 {
-  "name": "@convex-dev/self-hosting",
-  "description": "A self hosting component for Convex.",
-  "repository": "github:get-convex/self-hosting",
-  "homepage": "https://github.com/get-convex/self-hosting#readme",
+  "name": "@convex-dev/static-hosting",
+  "description": "A static hosting component for Convex.",
+  "repository": "github:get-convex/static-hosting",
+  "homepage": "https://github.com/get-convex/static-hosting#readme",
   "bugs": {
-    "url": "https://github.com/get-convex/self-hosting/issues"
+    "url": "https://github.com/get-convex/static-hosting/issues"
   },
   "version": "0.1.1",
   "license": "Apache-2.0",
@@ -14,10 +14,10 @@
   ],
   "type": "module",
   "bin": {
-    "self-hosting": "./dist/cli/index.js"
+    "static-hosting": "./dist/cli/index.js"
   },
   "scripts": {
-    "postinstall": "echo '\\n📦 @convex-dev/self-hosting installed!\\n\\n   🚀 Quick Setup (Interactive):\\n   npx @convex-dev/self-hosting setup\\n\\n   🤖 For LLMs: See INTEGRATION.md for complete integration instructions\\n   📖 Manual Setup: npx @convex-dev/self-hosting init\\n'",
+    "postinstall": "echo '\\n📦 @convex-dev/static-hosting installed!\\n\\n   🚀 Quick Setup (Interactive):\\n   npx @convex-dev/static-hosting setup\\n\\n   🤖 For LLMs: See INTEGRATION.md for complete integration instructions\\n   📖 Manual Setup: npx @convex-dev/static-hosting init\\n'",
     "dev": "run-p -r 'dev:*'",
     "dev:backend": "convex dev --typecheck-components",
     "dev:frontend": "cd example && vite --clearScreen false",

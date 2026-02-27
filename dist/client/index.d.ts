@@ -20,11 +20,11 @@ export declare function registerStaticRoutes(http: HttpRouter, component: Compon
  * @example
  * ```typescript
  * // In your convex/staticHosting.ts
- * import { exposeUploadApi } from "@convex-dev/self-hosting";
+ * import { exposeUploadApi } from "@convex-dev/static-hosting";
  * import { components } from "./_generated/api";
  *
  * export const { generateUploadUrl, recordAsset, gcOldAssets, listAssets } =
- *   exposeUploadApi(components.selfHosting);
+ *   exposeUploadApi(components.staticHosting);
  * ```
  *
  * Then deploy using:
@@ -44,8 +44,8 @@ export declare function exposeUploadApi(component: ComponentApi): {
      * Pass storageId for Convex storage assets, or blobId for CDN assets.
      */
     recordAsset: import("convex/server").RegisteredMutation<"internal", {
-        storageId?: string | undefined;
         blobId?: string | undefined;
+        storageId?: string | undefined;
         path: string;
         contentType: string;
         deploymentId: string;
@@ -73,10 +73,10 @@ export declare function exposeUploadApi(component: ComponentApi): {
      */
     recordAssets: import("convex/server").RegisteredMutation<"internal", {
         assets: {
-            storageId: string;
             path: string;
             contentType: string;
             deploymentId: string;
+            storageId: string;
         }[];
     }, Promise<void>>;
     /**
@@ -103,13 +103,13 @@ export declare function exposeUploadApi(component: ComponentApi): {
  * @example
  * ```typescript
  * // In your convex/staticHosting.ts
- * import { exposeUploadApi, exposeDeploymentQuery } from "@convex-dev/self-hosting";
+ * import { exposeUploadApi, exposeDeploymentQuery } from "@convex-dev/static-hosting";
  * import { components } from "./_generated/api";
  *
  * export const { generateUploadUrl, recordAsset, gcOldAssets, listAssets } =
- *   exposeUploadApi(components.selfHosting);
+ *   exposeUploadApi(components.staticHosting);
  *
- * export const { getCurrentDeployment } = exposeDeploymentQuery(components.selfHosting);
+ * export const { getCurrentDeployment } = exposeDeploymentQuery(components.staticHosting);
  * ```
  */
 export declare function exposeDeploymentQuery(component: ComponentApi): {
@@ -132,7 +132,7 @@ export declare function exposeDeploymentQuery(component: ComponentApi): {
  * @example
  * ```typescript
  * // In your React app's main.tsx
- * import { getConvexUrl } from "@convex-dev/self-hosting";
+ * import { getConvexUrl } from "@convex-dev/static-hosting";
  *
  * const convexUrl = import.meta.env.VITE_CONVEX_URL ?? getConvexUrl();
  * const convex = new ConvexReactClient(convexUrl);

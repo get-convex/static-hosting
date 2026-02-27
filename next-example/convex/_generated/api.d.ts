@@ -51,7 +51,7 @@ export declare const internal: FilterApi<
 >;
 
 export declare const components: {
-  selfHosting: {
+  staticHosting: {
     lib: {
       gcOldAssets: FunctionReference<
         "mutation",

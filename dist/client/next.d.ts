@@ -17,16 +17,19 @@ import type { ComponentApi } from "../component/_generated/component.js";
  * ```typescript
  * // convex/http.ts
  * import { httpRouter } from "convex/server";
- * import { registerNextRoutes } from "@convex-dev/self-hosting/next";
+ * import { registerNextRoutes } from "@convex-dev/static-hosting/next";
  * import { components, internal } from "./_generated/api";
  *
  * const http = httpRouter();
- * registerNextRoutes(http, components.selfHosting, internal._generatedNextServer.handle);
+ * registerNextRoutes(http, components.staticHosting, internal._generatedNextServer.handle);
  * export default http;
  * ```
  */
-export declare function registerNextRoutes(http: HttpRouter, component: ComponentApi, actionRef: FunctionReference<"action", "internal", Record<string, unknown>, unknown>, { pathPrefix, }?: {
+export declare function registerNextRoutes(http: HttpRouter, component: ComponentApi, actionRef: FunctionReference<"action", "internal", Record<string, unknown>, unknown>, { pathPrefix, warmup, }?: {
     pathPrefix?: string;
+    /** Inject a warmup script into static HTML pages to pre-boot the Node.js
+     *  NextServer in the background. Defaults to true. */
+    warmup?: boolean;
 }): void;
 /**
  * Get the MIME type for a file path.
