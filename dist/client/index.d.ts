@@ -20,7 +20,7 @@ export declare function registerStaticRoutes(http: HttpRouter, component: Compon
  * @example
  * ```typescript
  * // In your convex/staticHosting.ts
- * import { exposeUploadApi } from "@convex-dev/self-hosting";
+ * import { exposeUploadApi } from "@convex-dev/static-hosting";
  * import { components } from "./_generated/api";
  *
  * export const { generateUploadUrl, recordAsset, gcOldAssets, listAssets } =
@@ -103,7 +103,7 @@ export declare function exposeUploadApi(component: ComponentApi): {
  * @example
  * ```typescript
  * // In your convex/staticHosting.ts
- * import { exposeUploadApi, exposeDeploymentQuery } from "@convex-dev/self-hosting";
+ * import { exposeUploadApi, exposeDeploymentQuery } from "@convex-dev/static-hosting";
  * import { components } from "./_generated/api";
  *
  * export const { generateUploadUrl, recordAsset, gcOldAssets, listAssets } =
@@ -132,7 +132,7 @@ export declare function exposeDeploymentQuery(component: ComponentApi): {
  * @example
  * ```typescript
  * // In your React app's main.tsx
- * import { getConvexUrl } from "@convex-dev/self-hosting";
+ * import { getConvexUrl } from "@convex-dev/static-hosting";
  *
  * const convexUrl = import.meta.env.VITE_CONVEX_URL ?? getConvexUrl();
  * const convex = new ConvexReactClient(convexUrl);

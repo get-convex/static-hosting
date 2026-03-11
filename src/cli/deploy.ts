@@ -3,7 +3,7 @@
  * One-shot deployment command that deploys both Convex backend and static files.
  *
  * Usage:
- *   npx @convex-dev/self-hosting deploy [options]
+ *   npx @convex-dev/static-hosting deploy [options]
  *
  * This command:
  * 1. Builds the frontend with the correct VITE_CONVEX_URL
@@ -58,7 +58,7 @@ function parseArgs(args: string[]): ParsedArgs {
 
 function showHelp(): void {
   console.log(`
-Usage: npx @convex-dev/self-hosting deploy [options]
+Usage: npx @convex-dev/static-hosting deploy [options]
 
 One-shot deployment: builds frontend, deploys Convex backend, then deploys static files.
 Minimizes the inconsistency window between backend and frontend updates.
@@ -78,13 +78,13 @@ Deployment Flow:
 
 Examples:
   # Full deployment
-  npx @convex-dev/self-hosting deploy
+  npx @convex-dev/static-hosting deploy
 
   # Skip build (if already built)
-  npx @convex-dev/self-hosting deploy --skip-build
+  npx @convex-dev/static-hosting deploy --skip-build
 
   # Only deploy static files (skip Convex backend)
-  npx @convex-dev/self-hosting deploy --skip-convex
+  npx @convex-dev/static-hosting deploy --skip-convex
 `);
 }
 
@@ -132,7 +132,7 @@ async function uploadToConvexStorage(
   console.log("");
 
   const uploadArgs = [
-    "@convex-dev/self-hosting",
+    "@convex-dev/static-hosting",
     "upload",
     "--dist",
     distDir,
