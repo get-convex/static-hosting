@@ -2,7 +2,7 @@ import { components } from "./_generated/api.js";
 import {
   exposeUploadApi,
   exposeDeploymentQuery,
-} from "@convex-dev/self-hosting";
+} from "@convex-dev/static-hosting";
 
 // Expose the upload API as INTERNAL functions.
 // These can only be called via `npx convex run` - not from the public internet.

@@ -1,8 +1,8 @@
-# Convex Self Hosting
+# Convex Static Hosting
 
-[![npm version](https://badge.fury.io/js/@get-convex%2Fself-hosting.svg)](https://badge.fury.io/js/@convex-dev/self-hosting)
+[![npm version](https://badge.fury.io/js/@convex-dev%2Fstatic-hosting.svg)](https://badge.fury.io/js/@convex-dev/static-hosting)
 
-A Convex component that enables self-hosting static React/Vite apps using Convex
+A Convex component that enables hosting static React/Vite apps using Convex
 HTTP actions and file storage. No external hosting provider required!
 
 ## Quick Start
@@ -10,8 +10,8 @@ HTTP actions and file storage. No external hosting provider required!
 ### Automated Setup (Recommended)
 
 ```bash
-npm install @convex-dev/self-hosting
-npx @convex-dev/self-hosting setup
+npm install @convex-dev/static-hosting
+npx @convex-dev/static-hosting setup
 ```
 
 The interactive wizard will:
@@ -55,14 +55,14 @@ https://github.com/user-attachments/assets/5eaf781f-87da-4292-9f96-38070c86cd39
 ### 1. Install
 
 ```bash
-npm install @convex-dev/self-hosting
+npm install @convex-dev/static-hosting
 ```
 
 ### 2. Add to your `convex/convex.config.ts`:
 
 ```ts
 import { defineApp } from "convex/server";
-import selfHosting from "@convex-dev/self-hosting/convex.config.js";
+import selfHosting from "@convex-dev/static-hosting/convex.config.js";
 
 const app = defineApp();
 app.use(selfHosting);
@@ -76,7 +76,7 @@ Create or update `convex/http.ts` to serve static files:
 
 ```ts
 import { httpRouter } from "convex/server";
-import { registerStaticRoutes } from "@convex-dev/self-hosting";
+import { registerStaticRoutes } from "@convex-dev/static-hosting";
 import { components } from "./_generated/api";
 
 const http = httpRouter();
@@ -92,7 +92,7 @@ export default http;
 Create a file like `convex/staticHosting.ts`:
 
 ```ts
-import { exposeUploadApi } from "@convex-dev/self-hosting";
+import { exposeUploadApi } from "@convex-dev/static-hosting";
 import { components } from "./_generated/api";
 
 // These are INTERNAL functions - only callable via `npx convex run`
@@ -111,7 +111,7 @@ HTTP actions enabled", it means the Convex backend hasn't been deployed yet.
 {
   "scripts": {
     "build": "vite build",
-    "deploy:static": "npx @convex-dev/self-hosting upload --build --prod"
+    "deploy:static": "npx @convex-dev/static-hosting upload --build --prod"
   }
 }
 ```
@@ -123,7 +123,7 @@ that would use the dev URL from `.env.local`.
 **CLI Options:**
 
 ```bash
-npx @convex-dev/self-hosting upload [options]
+npx @convex-dev/static-hosting upload [options]
 
 Options:
   -d, --dist <path>           Path to dist directory (default: ./dist)
@@ -138,10 +138,10 @@ Options:
 
 ```bash
 # Deploy to production with automatic build
-npx @convex-dev/self-hosting upload --build --prod
+npx @convex-dev/static-hosting upload --build --prod
 
 # Deploy to dev (for testing)
-npx @convex-dev/self-hosting upload --build
+npx @convex-dev/static-hosting upload --build
 ```
 
 ### Using Non-Vite Bundlers
@@ -186,7 +186,7 @@ Deploy both Convex backend and static files with a single command:
 npx convex login
 
 # Deploy everything
-npx @convex-dev/self-hosting deploy
+npx @convex-dev/static-hosting deploy
 ```
 
 The `deploy` command:
@@ -199,7 +199,7 @@ This minimizes the inconsistency window between backend and frontend updates.
 **Deploy command options:**
 
 ```bash
-npx @convex-dev/self-hosting deploy [options]
+npx @convex-dev/static-hosting deploy [options]
 
 Options:
   -d, --dist <path>           Path to dist directory (default: ./dist)
@@ -214,7 +214,7 @@ Add to `package.json` for easy deployments:
 ```json
 {
   "scripts": {
-    "deploy": "npx @convex-dev/self-hosting deploy"
+    "deploy": "npx @convex-dev/static-hosting deploy"
   }
 }
 ```
@@ -228,7 +228,7 @@ If you prefer more control, deploy separately:
 npx convex deploy
 
 # Deploy static files
-npx @convex-dev/self-hosting upload --build --prod
+npx @convex-dev/static-hosting upload --build --prod
 ```
 
 Your app is now live at `https://your-deployment.convex.site`
@@ -250,7 +250,7 @@ Connected clients can be notified when a new deployment is available:
 1. **Expose the deployment query**:
 
    ```ts
-   import { exposeDeploymentQuery } from "@convex-dev/self-hosting";
+   import { exposeDeploymentQuery } from "@convex-dev/static-hosting";
    import { components } from "./_generated/api";
 
    export const { getCurrentDeployment } = exposeDeploymentQuery(
@@ -261,7 +261,7 @@ Connected clients can be notified when a new deployment is available:
 2. **Add the update banner to your app**:
 
    ```tsx
-   import { UpdateBanner } from "@convex-dev/self-hosting/react";
+   import { UpdateBanner } from "@convex-dev/static-hosting/react";
    import { api } from "../convex/_generated/api";
 
    function App() {
@@ -281,7 +281,7 @@ Connected clients can be notified when a new deployment is available:
 Or use the hook for custom UI:
 
 ```tsx
-import { useDeploymentUpdates } from "@convex-dev/self-hosting/react";
+import { useDeploymentUpdates } from "@convex-dev/static-hosting/react";
 
 const { updateAvailable, reload, dismiss } = useDeploymentUpdates(
   api.staticHosting.getCurrentDeployment,

@@ -20,7 +20,7 @@ type DeploymentInfo = {
  *
  * @example
  * ```tsx
- * import { useDeploymentUpdates } from "@convex-dev/self-hosting/react";
+ * import { useDeploymentUpdates } from "@convex-dev/static-hosting/react";
  * import { api } from "../convex/_generated/api";
  *
  * function App() {
@@ -96,7 +96,7 @@ export function useDeploymentUpdates(
  *
  * @example
  * ```tsx
- * import { UpdateBanner } from "@convex-dev/self-hosting/react";
+ * import { UpdateBanner } from "@convex-dev/static-hosting/react";
  * import { api } from "../convex/_generated/api";
  *
  * function App() {

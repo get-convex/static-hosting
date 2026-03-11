@@ -2,7 +2,7 @@
 
 ## Overview
 
-This implementation allows self-hosting static React/Vite apps using Convex HTTP actions and file storage, eliminating the need for Vercel or other hosting providers.
+This implementation allows hosting static React/Vite apps using Convex HTTP actions and file storage, eliminating the need for Vercel or other hosting providers.
 
 ## Architecture
 
@@ -443,7 +443,7 @@ For better performance, non-HTML static assets can be served from a CDN via [con
 
 **Schema change**: The `staticAssets` table now supports both `storageId` (optional) and `blobId` (optional). An asset has either a `storageId` (Convex storage) or a `blobId` (CDN).
 
-**Deploy command**: `npx @convex-dev/self-hosting deploy --cdn`
+**Deploy command**: `npx @convex-dev/static-hosting deploy --cdn`
 
 See `INTEGRATION.md` for full CDN setup instructions.
 
