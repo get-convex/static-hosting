@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- Rename package from `@convex-dev/self-hosting` to `@convex-dev/static-hosting`
+
 ## 0.1.1-alpha.0
 
 - Add optional convex-fs CDN mode for static asset serving (`--cdn` flag)
