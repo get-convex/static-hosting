@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3
+
+- Fix missing README in published package
+
 ## 0.1.2
 
 - Rename package from `@convex-dev/self-hosting` to `@convex-dev/static-hosting`

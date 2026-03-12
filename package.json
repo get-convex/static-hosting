@@ -1,12 +1,15 @@
 {
   "name": "@convex-dev/static-hosting",
   "description": "A static hosting component for Convex.",
-  "repository": "github:get-convex/static-hosting",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/get-convex/static-hosting.git"
+  },
   "homepage": "https://github.com/get-convex/static-hosting#readme",
   "bugs": {
     "url": "https://github.com/get-convex/static-hosting/issues"
   },
-  "version": "0.1.2",
+  "version": "0.1.3",
   "license": "Apache-2.0",
   "keywords": [
     "convex",
@@ -14,7 +17,7 @@
   ],
   "type": "module",
   "bin": {
-    "static-hosting": "./dist/cli/index.js"
+    "static-hosting": "dist/cli/index.js"
   },
   "scripts": {
     "postinstall": "echo '\\n📦 @convex-dev/static-hosting installed!\\n\\n   🚀 Quick Setup (Interactive):\\n   npx @convex-dev/static-hosting setup\\n\\n   🤖 For LLMs: See INTEGRATION.md for complete integration instructions\\n   📖 Manual Setup: npx @convex-dev/static-hosting init\\n'",
