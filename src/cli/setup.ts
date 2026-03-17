@@ -83,7 +83,7 @@ import {
 } from "@convex-dev/static-hosting";
 
 // Internal functions for secure uploads (CLI only)
-export const { generateUploadUrl, recordAsset, gcOldAssets, listAssets } =
+export const { generateUploadUrl, generateUploadUrls, recordAsset, recordAssets, gcOldAssets, listAssets } =
   exposeUploadApi(components.selfHosting);
 
 // Public query for live reload notifications

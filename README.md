@@ -97,7 +97,7 @@ import { components } from "./_generated/api";
 
 // These are INTERNAL functions - only callable via `npx convex run`
 // NOT accessible from the public internet
-export const { generateUploadUrl, recordAsset, gcOldAssets, listAssets } =
+export const { generateUploadUrl, generateUploadUrls, recordAsset, recordAssets, gcOldAssets, listAssets } =
   exposeUploadApi(components.selfHosting);
 ```
 

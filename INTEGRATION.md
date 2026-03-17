@@ -44,7 +44,7 @@ import {
 } from "@convex-dev/static-hosting";
 
 // Internal functions for secure uploads (CLI only)
-export const { generateUploadUrl, recordAsset, gcOldAssets, listAssets } =
+export const { generateUploadUrl, generateUploadUrls, recordAsset, recordAssets, gcOldAssets, listAssets } =
   exposeUploadApi(components.selfHosting);
 
 // Public query for live reload notifications
@@ -192,7 +192,7 @@ import { internalAction } from "./_generated/server";
 import { v } from "convex/values";
 import { del } from "convex-fs";
 
-export const { generateUploadUrl, recordAsset, gcOldAssets, listAssets } =
+export const { generateUploadUrl, generateUploadUrls, recordAsset, recordAssets, gcOldAssets, listAssets } =
   exposeUploadApi(components.selfHosting);
 
 export const { getCurrentDeployment } =
@@ -314,7 +314,7 @@ Registers HTTP routes for serving static files.
 ### exposeUploadApi(component)
 Exposes internal functions for CLI-based uploads.
 
-**Returns**: `{ generateUploadUrl, recordAsset, gcOldAssets, listAssets }`
+**Returns**: `{ generateUploadUrl, generateUploadUrls, recordAsset, recordAssets, gcOldAssets, listAssets }`
 
 ### exposeDeploymentQuery(component)
 Exposes a query for live reload notifications.
