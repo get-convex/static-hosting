@@ -295,11 +295,12 @@ npm install @convex-dev/static-hosting
 - You must create `convex/http.ts` and register routes
 - Run `npx convex dev` to regenerate types after adding http.ts
 
-### Component name mismatch
-Default component name is `staticHosting`. If you named your file differently or used a different component name in config, specify it:
+### `--component` is the module name, not the component name
+Despite its name, `--component <name>` refers to the **Convex module** where you exposed the upload API (i.e. `convex/<name>.ts`), not the component name registered in `convex.config.ts`. If you put the `exposeUploadApi(...)` re-exports in `convex/myCustomName.ts`, pass:
 ```bash
 npx @convex-dev/static-hosting upload --component myCustomName
 ```
+Default is `staticHosting` (i.e. `convex/staticHosting.ts`).
 
 ## API Reference
 

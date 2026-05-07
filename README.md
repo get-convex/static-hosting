@@ -127,7 +127,8 @@ npx @convex-dev/static-hosting upload [options]
 
 Options:
   -d, --dist <path>           Path to dist directory (default: ./dist)
-  -c, --component <name>      Convex component name (default: staticHosting)
+  -c, --component <module>    Module name where upload API is exposed — i.e.
+                              convex/<module>.ts (default: staticHosting)
       --prod                  Deploy to production Convex deployment
       --dev                   Deploy to dev deployment (default)
   -b, --build                 Run 'npm run build' with correct VITE_CONVEX_URL
@@ -203,7 +204,8 @@ npx @convex-dev/static-hosting deploy [options]
 
 Options:
   -d, --dist <path>           Path to dist directory (default: ./dist)
-  -c, --component <name>      Convex component name (default: staticHosting)
+  -c, --component <module>    Module name where upload API is exposed — i.e.
+                              convex/<module>.ts (default: staticHosting)
       --skip-build            Skip the build step (use existing dist)
       --skip-convex           Skip Convex backend deployment
   -h, --help                  Show help
