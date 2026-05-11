@@ -218,7 +218,17 @@ export function registerStaticRoutes(
 
     let asset: AssetDoc = await ctx.runQuery(component.lib.getByPath, { path });
 
-    // SPA fallback: if not found and no file extension, serve index.html
+    // Directory-index fallback: serve /foo/index.html when /foo or /foo/ is
+    // requested. Supports frameworks like Next.js `output: 'export'` that emit
+    // directory-based static trees (e.g. `out/about/index.html`).
+    if (!asset && !hasFileExtension(path)) {
+      const indexPath = path.endsWith("/")
+        ? `${path}index.html`
+        : `${path}/index.html`;
+      asset = await ctx.runQuery(component.lib.getByPath, { path: indexPath });
+    }
+
+    // SPA fallback: if still not found and no file extension, serve index.html
     if (!asset && spaFallback && !hasFileExtension(path)) {
       asset = await ctx.runQuery(component.lib.getByPath, {
         path: "/index.html",
