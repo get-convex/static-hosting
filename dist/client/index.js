@@ -281,7 +281,7 @@ export function registerStaticRoutes(http, component, { pathPrefix = "/", spaFal
  * import { exposeUploadApi } from "@convex-dev/static-hosting";
  * import { components } from "./_generated/api";
  *
- * export const { generateUploadUrl, recordAsset, gcOldAssets, listAssets } =
+ * export const { generateUploadUrl, generateUploadUrls, recordAsset, recordAssets, gcOldAssets, listAssets } =
  *   exposeUploadApi(components.selfHosting);
  * ```
  *
@@ -428,7 +428,7 @@ export function exposeUploadApi(component) {
  * import { exposeUploadApi, exposeDeploymentQuery } from "@convex-dev/static-hosting";
  * import { components } from "./_generated/api";
  *
- * export const { generateUploadUrl, recordAsset, gcOldAssets, listAssets } =
+ * export const { generateUploadUrl, generateUploadUrls, recordAsset, recordAssets, gcOldAssets, listAssets } =
  *   exposeUploadApi(components.selfHosting);
  *
  * export const { getCurrentDeployment } = exposeDeploymentQuery(components.selfHosting);
