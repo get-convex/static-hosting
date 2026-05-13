@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { api } from "./_generated/api.js";
+import { api, internal } from "./_generated/api.js";
 import { initConvexTest } from "./setup.test.js";
 
 describe("component lib", () => {
@@ -12,99 +12,105 @@ describe("component lib", () => {
     vi.useRealTimers();
   });
 
-  test("can record and retrieve assets", async () => {
+  test("generates upload URLs", async () => {
     const t = initConvexTest();
-
-    // First upload a file to storage (mock with a fake storageId)
-    const uploadUrl = await t.mutation(api.lib.generateUploadUrl, {});
-    expect(uploadUrl).toBeDefined();
+    const uploadUrl = await t.mutation(internal.lib.generateUploadUrl, {});
     expect(typeof uploadUrl).toBe("string");
+    expect(uploadUrl.length).toBeGreaterThan(0);
+
+    const urls = await t.mutation(internal.lib.generateUploadUrls, { count: 3 });
+    expect(urls).toHaveLength(3);
+    for (const u of urls) {
+      expect(typeof u).toBe("string");
+    }
   });
 
-  test("can look up assets by path", async () => {
+  test("getByPath returns null when absent", async () => {
     const t = initConvexTest();
-
-    // Look up a non-existent path
-    const asset = await t.query(api.lib.getByPath, { path: "/index.html" });
+    const asset = await t.query(internal.lib.getByPath, { path: "/index.html" });
     expect(asset).toBeNull();
   });
 
-  test("can list assets", async () => {
+  test("listAssets is empty by default", async () => {
     const t = initConvexTest();
-
-    const assets = await t.query(api.lib.listAssets, {});
+    const assets = await t.query(internal.lib.listAssets, {});
     expect(assets).toHaveLength(0);
   });
 
-  test("gc removes old assets", async () => {
+  test("gcOldAssets on empty db returns zero", async () => {
     const t = initConvexTest();
-
-    // GC with no assets should return empty arrays
-    const result = await t.mutation(api.lib.gcOldAssets, {
-      currentDeploymentId: "test-deployment",
+    const result = await t.mutation(internal.lib.gcOldAssets, {
+      currentDeploymentId: "deploy-1",
     });
-    expect(result.storageIds).toHaveLength(0);
+    expect(result.deleted).toBe(0);
     expect(result.blobIds).toHaveLength(0);
   });
 
-  test("recordAsset returns old IDs when replacing", async () => {
+  test("recordAsset stores and replaces blob assets", async () => {
     const t = initConvexTest();
 
-    // Record a new asset (no previous) - should return nulls
-    const first = await t.mutation(api.lib.recordAsset, {
+    await t.mutation(internal.lib.recordAsset, {
       path: "/test.js",
       blobId: "blob-123",
       contentType: "application/javascript; charset=utf-8",
       deploymentId: "deploy-1",
     });
-    expect(first.oldStorageId).toBeNull();
-    expect(first.oldBlobId).toBeNull();
 
-    // Replace with a new blobId - should return the old one
-    const second = await t.mutation(api.lib.recordAsset, {
+    const first = await t.query(internal.lib.getByPath, { path: "/test.js" });
+    expect(first?.blobId).toBe("blob-123");
+
+    await t.mutation(internal.lib.recordAsset, {
       path: "/test.js",
       blobId: "blob-456",
       contentType: "application/javascript; charset=utf-8",
       deploymentId: "deploy-2",
     });
-    expect(second.oldStorageId).toBeNull();
-    expect(second.oldBlobId).toBe("blob-123");
+
+    const second = await t.query(internal.lib.getByPath, { path: "/test.js" });
+    expect(second?.blobId).toBe("blob-456");
   });
 
-  test("gc returns blobIds for CDN assets", async () => {
+  test("gcOldAssets returns blobIds for old CDN assets and bumps deployment", async () => {
     const t = initConvexTest();
 
-    // Record a CDN asset
-    await t.mutation(api.lib.recordAsset, {
+    await t.mutation(internal.lib.recordAsset, {
       path: "/assets/main.js",
       blobId: "blob-abc",
       contentType: "application/javascript; charset=utf-8",
       deploymentId: "deploy-old",
     });
 
-    // GC should return the blobId
-    const result = await t.mutation(api.lib.gcOldAssets, {
+    const result = await t.mutation(internal.lib.gcOldAssets, {
       currentDeploymentId: "deploy-new",
     });
-    expect(result.storageIds).toHaveLength(0);
+    expect(result.deleted).toBe(0);
     expect(result.blobIds).toEqual(["blob-abc"]);
+
+    const deployment = await t.query(api.lib.getCurrentDeployment, {});
+    expect(deployment?.currentDeploymentId).toBe("deploy-new");
   });
 
-  test("asset with blobId can be looked up by path", async () => {
+  test("recordAssets batches multiple inserts", async () => {
     const t = initConvexTest();
 
-    await t.mutation(api.lib.recordAsset, {
-      path: "/assets/style.css",
-      blobId: "blob-xyz",
-      contentType: "text/css; charset=utf-8",
-      deploymentId: "deploy-1",
+    await t.mutation(internal.lib.recordAssets, {
+      assets: [
+        {
+          path: "/a.js",
+          blobId: "blob-a",
+          contentType: "application/javascript; charset=utf-8",
+          deploymentId: "deploy-1",
+        },
+        {
+          path: "/b.css",
+          blobId: "blob-b",
+          contentType: "text/css; charset=utf-8",
+          deploymentId: "deploy-1",
+        },
+      ],
     });
 
-    const asset = await t.query(api.lib.getByPath, {
-      path: "/assets/style.css",
-    });
-    expect(asset).not.toBeNull();
-    expect(asset!.blobId).toBe("blob-xyz");
-    expect(asset!.storageId).toBeUndefined();
+    const all = await t.query(internal.lib.listAssets, {});
+    expect(all).toHaveLength(2);
   });
 });

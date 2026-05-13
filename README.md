@@ -14,11 +14,9 @@ npm install @convex-dev/static-hosting
 npx @convex-dev/static-hosting setup
 ```
 
-The interactive wizard will:
-1. Create necessary Convex files
-2. Add deploy script to package.json
+The setup command creates `convex/convex.config.ts` (or shows you what to add)
+and registers a `deploy` script. Then:
 
-Then deploy:
 ```bash
 npm run deploy
 ```
@@ -58,158 +56,30 @@ https://github.com/user-attachments/assets/5eaf781f-87da-4292-9f96-38070c86cd39
 npm install @convex-dev/static-hosting
 ```
 
-### 2. Add to your `convex/convex.config.ts`:
+### 2. Wire up the component
+
+`convex/convex.config.ts`:
 
 ```ts
 import { defineApp } from "convex/server";
-import selfHosting from "@convex-dev/static-hosting/convex.config.js";
+import staticHosting from "@convex-dev/static-hosting/convex.config.js";
 
 const app = defineApp();
-app.use(selfHosting);
+app.use(staticHosting, { httpPrefix: "/" });
 
 export default app;
 ```
 
-### 3. Register HTTP routes
+That's it for required wiring. The component owns its own HTTP routes and file
+storage — you don't register routes, expose functions, or re-export an upload
+API from your app.
 
-Create or update `convex/http.ts` to serve static files:
+> `httpPrefix: "/"` mounts the static site at the deployment root. If your app
+> already serves its own HTTP routes there, either change those to a sub-path
+> (e.g. `/api/...`) or mount the component at a sub-path instead (e.g.
+> `httpPrefix: "/app/"`).
 
-```ts
-import { httpRouter } from "convex/server";
-import { registerStaticRoutes } from "@convex-dev/static-hosting";
-import { components } from "./_generated/api";
-
-const http = httpRouter();
-
-// Serve static files at the root path with SPA fallback
-registerStaticRoutes(http, components.selfHosting);
-
-export default http;
-```
-
-### 4. Expose upload API (internal functions)
-
-Create a file like `convex/staticHosting.ts`:
-
-```ts
-import { exposeUploadApi } from "@convex-dev/static-hosting";
-import { components } from "./_generated/api";
-
-// These are INTERNAL functions - only callable via `npx convex run`
-// NOT accessible from the public internet
-export const { generateUploadUrl, generateUploadUrls, recordAsset, recordAssets, gcOldAssets, listAssets } =
-  exposeUploadApi(components.selfHosting);
-```
-
-**Note:** Run `npx convex dev` at least once after setup to push your schema and
-enable HTTP actions. If you see the error "This Convex deployment does not have
-HTTP actions enabled", it means the Convex backend hasn't been deployed yet.
-
-### 5. Add deploy script to package.json
-
-```json
-{
-  "scripts": {
-    "build": "vite build",
-    "deploy:static": "npx @convex-dev/static-hosting upload --build --prod"
-  }
-}
-```
-
-**Important:** Use `--build` to ensure `VITE_CONVEX_URL` is set correctly for
-production. Don't run `npm run build` separately before the upload command, as
-that would use the dev URL from `.env.local`.
-
-**CLI Options:**
-
-```bash
-npx @convex-dev/static-hosting upload [options]
-
-Options:
-  -d, --dist <path>           Path to dist directory (default: ./dist)
-  -c, --component <name>      Convex component name (default: staticHosting)
-      --prod                  Deploy to production Convex deployment
-      --dev                   Deploy to dev deployment (default)
-  -b, --build                 Run 'npm run build' with correct VITE_CONVEX_URL
-  -h, --help                  Show help
-```
-
-**Examples:**
-
-```bash
-# Deploy to production with automatic build
-npx @convex-dev/static-hosting upload --build --prod
-
-# Deploy to dev (for testing)
-npx @convex-dev/static-hosting upload --build
-```
-
-### Using Non-Vite Bundlers
-
-The CLI's `--build` flag sets `VITE_CONVEX_URL` when running your build command.
-For bundlers that use different environment variable conventions, wrap your build
-script to pass through the value:
-
-**For Expo:**
-
-```json
-{
-  "scripts": {
-    "build": "EXPO_PUBLIC_CONVEX_URL=${VITE_CONVEX_URL:-$EXPO_PUBLIC_CONVEX_URL} npx expo export --platform web"
-  }
-}
-```
-
-**For Next.js:**
-
-```json
-{
-  "scripts": {
-    "build": "NEXT_PUBLIC_CONVEX_URL=${VITE_CONVEX_URL:-$NEXT_PUBLIC_CONVEX_URL} next build"
-  }
-}
-```
-
-The pattern `${VITE_CONVEX_URL:-$VAR}` uses `VITE_CONVEX_URL` if set (by the CLI),
-otherwise falls back to your bundler-specific variable. This allows the CLI's
-`--build` flag to work correctly while keeping your standalone `npm run build`
-functional.
-
-## Deployment
-
-### One-Shot Deployment (Recommended)
-
-Deploy both Convex backend and static files with a single command:
-
-```bash
-# Make sure you're logged in
-npx convex login
-
-# Deploy everything
-npx @convex-dev/static-hosting deploy
-```
-
-The `deploy` command:
-1. Builds frontend with production `VITE_CONVEX_URL`
-2. Deploys Convex backend (`npx convex deploy`)
-3. Deploys static files to Convex storage
-
-This minimizes the inconsistency window between backend and frontend updates.
-
-**Deploy command options:**
-
-```bash
-npx @convex-dev/static-hosting deploy [options]
-
-Options:
-  -d, --dist <path>           Path to dist directory (default: ./dist)
-  -c, --component <name>      Convex component name (default: staticHosting)
-      --skip-build            Skip the build step (use existing dist)
-      --skip-convex           Skip Convex backend deployment
-  -h, --help                  Show help
-```
-
-Add to `package.json` for easy deployments:
+### 3. Add a deploy script
 
 ```json
 {
@@ -219,105 +89,155 @@ Add to `package.json` for easy deployments:
 }
 ```
 
-### Manual Two-Step Deployment
+## Features
 
-If you prefer more control, deploy separately:
+- **Zero-glue integration** — one `app.use(...)` line, no `http.ts` or upload
+  re-exports in your app.
+- **SPA fallback** — paths without an extension fall back to `/index.html`.
+- **Smart caching** — hashed assets get `immutable, max-age=31536000`; HTML uses
+  ETag revalidation.
+- **Auto cleanup** — old deployment files are garbage collected on every deploy.
+- **Secure uploads** — uploads use the CLI's authenticated session (no public
+  upload endpoint).
+
+## Deployment
 
 ```bash
-# Deploy Convex backend
-npx convex deploy
+npx convex login
+npx @convex-dev/static-hosting deploy
+```
 
-# Deploy static files
+The `deploy` command:
+
+1. Builds your frontend with the production `VITE_CONVEX_URL`.
+2. Deploys the Convex backend.
+3. Uploads `dist/` to the component's storage.
+
+### Manual two-step
+
+```bash
+npx convex deploy
 npx @convex-dev/static-hosting upload --build --prod
 ```
 
-Your app is now live at `https://your-deployment.convex.site`
+Your app is live at `https://<deployment>.convex.site`.
 
-## Security
+### CLI options
 
-The upload API uses **internal functions** that can only be called via:
+```bash
+npx @convex-dev/static-hosting deploy [options]
+  -d, --dist <path>         Path to dist directory (default: ./dist)
+  -c, --component <name>    Component instance name (default: staticHosting)
+      --skip-build          Skip the build step (use existing dist)
+      --skip-convex         Skip Convex backend deployment
+      --cdn                 Upload non-HTML assets to convex-fs CDN
 
-- `npx convex run` (requires Convex CLI authentication)
-- Other Convex functions (server-side only)
+npx @convex-dev/static-hosting upload [options]
+  -d, --dist <path>         Path to dist directory (default: ./dist)
+  -c, --component <name>    Component instance name (default: staticHosting)
+      --prod                Deploy to production deployment
+  -b, --build               Run 'npm run build' with correct VITE_CONVEX_URL
+      --cdn                 Upload non-HTML assets to convex-fs CDN
+      --cdn-delete-function App function path that deletes CDN blobs (opt-in)
+  -j, --concurrency <n>     Parallel upload workers (default: 5)
+```
 
-This means unauthorized users **cannot** upload files to your site, even if they
-know your Convex URL.
+The CLI runs against the component directly (`npx convex run --component
+staticHosting lib:...`) — your app does not need to export `generateUploadUrl`,
+`recordAsset`, etc. If you mount the component under a different name, pass
+`--component <your-name>`.
 
-## Live Reload on Deploy
+### Non-Vite bundlers
 
-Connected clients can be notified when a new deployment is available:
+The CLI's `--build` flag sets `VITE_CONVEX_URL` when running your build. Wrap
+your build script to forward it to your bundler's env var:
 
-1. **Expose the deployment query**:
+```json
+// Expo
+"build": "EXPO_PUBLIC_CONVEX_URL=${VITE_CONVEX_URL:-$EXPO_PUBLIC_CONVEX_URL} npx expo export --platform web"
 
-   ```ts
-   import { exposeDeploymentQuery } from "@convex-dev/static-hosting";
-   import { components } from "./_generated/api";
+// Next.js
+"build": "NEXT_PUBLIC_CONVEX_URL=${VITE_CONVEX_URL:-$NEXT_PUBLIC_CONVEX_URL} next build"
+```
 
-   export const { getCurrentDeployment } = exposeDeploymentQuery(
-     components.selfHosting,
-   );
-   ```
+## Live reload on deploy (optional)
 
-2. **Add the update banner to your app**:
+If you want a banner that prompts users to reload when a new deployment ships,
+expose the deployment query in your app and drop in `<UpdateBanner />`:
 
-   ```tsx
-   import { UpdateBanner } from "@convex-dev/static-hosting/react";
-   import { api } from "../convex/_generated/api";
+`convex/staticHosting.ts`:
 
-   function App() {
-     return (
-       <div>
-         <UpdateBanner
-           getCurrentDeployment={api.staticHosting.getCurrentDeployment}
-           message="New version available!"
-           buttonText="Refresh"
-         />
-         {/* rest of your app */}
-       </div>
-     );
-   }
-   ```
+```ts
+import { exposeDeploymentQuery } from "@convex-dev/static-hosting";
+import { components } from "./_generated/api";
 
-Or use the hook for custom UI:
+export const { getCurrentDeployment } = exposeDeploymentQuery(
+  components.staticHosting,
+);
+```
+
+`src/App.tsx`:
+
+```tsx
+import { UpdateBanner } from "@convex-dev/static-hosting/react";
+
+function App() {
+  return (
+    <>
+      <UpdateBanner message="New version!" buttonText="Reload" />
+      {/* ... */}
+    </>
+  );
+}
+```
+
+`UpdateBanner` resolves `api.staticHosting.getCurrentDeployment` by default. If
+you re-export the query under a different module name, pass it explicitly:
+
+```tsx
+import { api } from "../convex/_generated/api";
+<UpdateBanner getCurrentDeployment={api.myModule.getCurrentDeployment} />
+```
+
+For custom UI, use the hook:
 
 ```tsx
 import { useDeploymentUpdates } from "@convex-dev/static-hosting/react";
 
-const { updateAvailable, reload, dismiss } = useDeploymentUpdates(
-  api.staticHosting.getCurrentDeployment,
-);
+const { updateAvailable, reload, dismiss } = useDeploymentUpdates();
 ```
 
-## Configuration Options
+If `UpdateBanner` is used without exposing the query, a setup warning is logged
+to the console and the banner stays hidden.
 
-### `registerStaticRoutes`
+## Connecting to Convex from the static frontend
+
+When your frontend is served from `*.convex.site`, you can derive the matching
+backend URL without an env var:
 
 ```ts
-registerStaticRoutes(http, components.selfHosting, {
-  // URL prefix for static files (default: "/")
-  pathPrefix: "/app",
+import { getConvexUrl } from "@convex-dev/static-hosting";
 
-  // Enable SPA fallback to index.html (default: true)
-  spaFallback: true,
-});
+const convexUrl = import.meta.env.VITE_CONVEX_URL ?? getConvexUrl();
 ```
 
-## How It Works
+## How it works
 
-1. **Build Phase**: Your bundler (Vite, etc.) creates optimized files in `dist/`
-2. **Upload Phase**: The upload script uses `npx convex run` to:
-   - Generate signed upload URLs
-   - Upload each file to Convex storage
-   - Record file metadata in the component's database
-   - Garbage collect files from previous deployments
-3. **Serve Phase**: HTTP actions serve files from storage with:
-   - Correct Content-Type headers
-   - Smart cache control (immutable for hashed assets)
-   - SPA fallback for client-side routing
+The static-hosting component owns both the HTTP handler and the file storage:
+
+1. **Build phase** — your bundler produces `dist/`.
+2. **Upload phase** — the CLI authenticates with `npx convex run --component`,
+   calls the component's internal `generateUploadUrls`, uploads each file to the
+   component's storage, records metadata, and garbage-collects old deployments.
+3. **Serve phase** — the component's HTTP action looks up assets by path,
+   strips its mount prefix from the URL, and streams from storage with smart
+   caching. Paths without an extension fall back to `/index.html` for SPAs.
+
+Because everything lives inside the component, your app code stays one line.
 
 ## Example
 
-Check out the [example](./example) directory for a complete working example.
+See [`example/`](./example) for a complete Vite + React app integration.
 
 ```bash
 npm install
@@ -326,7 +246,7 @@ npm run dev
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for development setup and guidelines.
+See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 

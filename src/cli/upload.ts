@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * CLI tool to upload static files to Convex storage.
+ * CLI tool to upload static files to a Convex static-hosting component.
  *
  * Usage:
  *   npx @convex-dev/static-hosting upload [options]
  *
  * Options:
  *   --dist <path>            Path to dist directory (default: ./dist)
- *   --component <name>       Convex component with upload functions (default: staticHosting)
+ *   --component <name>       Component instance name (default: staticHosting)
  *   --prod                   Deploy to production deployment
  *   --help                   Show help
  */
@@ -102,11 +102,11 @@ Upload static files from a dist directory to Convex storage.
 
 Options:
   -d, --dist <path>           Path to dist directory (default: ./dist)
-  -c, --component <name>      Convex component with upload functions (default: staticHosting)
+  -c, --component <name>      Static-hosting component instance name (default: staticHosting)
       --prod                  Deploy to production deployment
   -b, --build                 Run 'npm run build' with correct VITE_CONVEX_URL before uploading
       --cdn                   Upload non-HTML assets to convex-fs CDN instead of Convex storage
-      --cdn-delete-function <name>  Convex function to delete CDN blobs (default: <component>:deleteCdnBlobs)
+      --cdn-delete-function <name>  App function to delete CDN blobs (e.g. staticHosting:deleteCdnBlobs)
   -j, --concurrency <n>       Number of parallel uploads (default: 5)
   -h, --help                  Show this help message
 
@@ -124,34 +124,24 @@ Examples:
 // Global flag for production mode
 let useProd = true;
 
-function _convexRun(
+function convexRunComponentAsync(
+  componentName: string,
   functionPath: string,
   args: Record<string, unknown> = {},
-): string {
-  const argsJson = JSON.stringify(args);
-  const prodFlag = useProd ? "--prod" : "";
-  const cmd = `npx convex run "${functionPath}" '${argsJson}' ${prodFlag} --typecheck=disable --codegen=disable`;
-  try {
-    const result = execSync(cmd, {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    return result.trim();
-  } catch (error) {
-    const execError = error as { stderr?: string; stdout?: string };
-    console.error("Convex run failed:", execError.stderr || execError.stdout);
-    throw error;
-  }
+): Promise<string> {
+  return convexRunAsync(functionPath, args, componentName);
 }
 
 function convexRunAsync(
   functionPath: string,
   args: Record<string, unknown> = {},
+  componentName?: string,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const cmdArgs = [
       "convex",
       "run",
+      ...(componentName ? ["--component", componentName] : []),
       functionPath,
       JSON.stringify(args),
       "--typecheck=disable",
@@ -204,8 +194,9 @@ async function uploadWithConcurrency(
   if (storageFiles.length > 0) {
     // Step 1: Generate all upload URLs in one batch call
     console.log(`  Generating ${storageFiles.length} upload URLs...`);
-    const urlsOutput = await convexRunAsync(
-      `${componentName}:generateUploadUrls`,
+    const urlsOutput = await convexRunComponentAsync(
+      componentName,
+      "lib:generateUploadUrls",
       { count: storageFiles.length },
     );
     const uploadUrls: string[] = JSON.parse(urlsOutput);
@@ -289,7 +280,7 @@ async function uploadWithConcurrency(
     const cdnAssets = allAssets.filter((a) => a.blobId);
 
     if (storageAssets.length > 0) {
-      await convexRunAsync(`${componentName}:recordAssets`, {
+      await convexRunComponentAsync(componentName, "lib:recordAssets", {
         assets: storageAssets.map((a) => ({
           path: a.path,
           storageId: a.storageId!,
@@ -301,7 +292,7 @@ async function uploadWithConcurrency(
 
     // CDN assets still need individual recording (they use blobId not storageId)
     for (const asset of cdnAssets) {
-      await convexRunAsync(`${componentName}:recordAsset`, {
+      await convexRunComponentAsync(componentName, "lib:recordAsset", {
         path: asset.path,
         blobId: asset.blobId,
         contentType: asset.contentType,
@@ -460,28 +451,35 @@ async function main(): Promise<void> {
   console.log("");
 
   // Garbage collect old files
-  const gcOutput = await convexRunAsync(`${componentName}:gcOldAssets`, {
-    currentDeploymentId: deploymentId,
-  });
+  const gcOutput = await convexRunComponentAsync(
+    componentName,
+    "lib:gcOldAssets",
+    { currentDeploymentId: deploymentId },
+  );
   const gcResult = JSON.parse(gcOutput);
-
-  // Handle both old format (number) and new format ({ deleted, blobIds })
-  const deletedCount = typeof gcResult === "number" ? gcResult : gcResult.deleted;
-  const oldBlobIds: string[] = typeof gcResult === "object" && gcResult.blobIds ? gcResult.blobIds : [];
+  const deletedCount: number = gcResult.deleted;
+  const oldBlobIds: string[] = gcResult.blobIds ?? [];
 
   if (deletedCount > 0) {
     console.log(`Cleaned up ${deletedCount} old storage file(s) from previous deployments`);
   }
 
-  // Clean up old CDN blobs if any
-  if (oldBlobIds.length > 0) {
-    const cdnDeleteFn = args.cdnDeleteFunction || `${componentName}:deleteCdnBlobs`;
+  // Clean up old CDN blobs if the app exposes a delete function. Component
+  // actions can't reach the deployment-root /fs/blobs endpoint, so CDN GC
+  // remains an opt-in app-level function.
+  if (oldBlobIds.length > 0 && args.cdnDeleteFunction) {
     try {
-      await convexRunAsync(cdnDeleteFn, { blobIds: oldBlobIds });
+      await convexRunAsync(args.cdnDeleteFunction, { blobIds: oldBlobIds });
       console.log(`Cleaned up ${oldBlobIds.length} old CDN blob(s) from previous deployments`);
     } catch {
-      console.warn(`Warning: Could not delete old CDN blobs. Make sure ${cdnDeleteFn} is defined.`);
+      console.warn(
+        `Warning: Could not delete old CDN blobs via ${args.cdnDeleteFunction}.`,
+      );
     }
+  } else if (oldBlobIds.length > 0) {
+    console.log(
+      `${oldBlobIds.length} old CDN blob(s) left in place. Pass --cdn-delete-function to clean them up.`,
+    );
   }
 
   console.log("");
