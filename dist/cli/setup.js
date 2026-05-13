@@ -12,11 +12,6 @@ const rl = createInterface({
     input: process.stdin,
     output: process.stdout,
 });
-function prompt(question) {
-    return new Promise((resolve) => {
-        rl.question(question, (answer) => resolve(answer.trim()));
-    });
-}
 function success(msg) {
     console.log(`✓ ${msg}`);
 }
@@ -67,7 +62,7 @@ import {
 } from "@convex-dev/static-hosting";
 
 // Internal functions for secure uploads (CLI only)
-export const { generateUploadUrl, recordAsset, gcOldAssets, listAssets } =
+export const { generateUploadUrl, generateUploadUrls, recordAsset, recordAssets, gcOldAssets, listAssets } =
   exposeUploadApi(components.selfHosting);
 
 // Public query for live reload notifications

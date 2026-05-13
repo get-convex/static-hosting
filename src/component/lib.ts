@@ -71,7 +71,7 @@ export const recordAsset = mutation({
       oldStorageId = existing.storageId ?? null;
       oldBlobId = existing.blobId ?? null;
       // Delete old record
-      await ctx.db.delete(existing._id);
+      await ctx.db.delete("staticAssets", existing._id);
     }
 
     // Insert new asset
@@ -114,7 +114,7 @@ export const gcOldAssets = mutation({
           blobIds.push(asset.blobId);
         }
         // Delete database record
-        await ctx.db.delete(asset._id);
+        await ctx.db.delete("staticAssets", asset._id);
       }
     }
 
@@ -163,7 +163,7 @@ export const deleteAllAssets = internalMutation({
       if (asset.blobId) {
         blobIds.push(asset.blobId);
       }
-      await ctx.db.delete(asset._id);
+      await ctx.db.delete("staticAssets", asset._id);
     }
 
     return {
@@ -211,7 +211,7 @@ export const setCurrentDeployment = mutation({
 
     if (existing) {
       // Update existing record
-      await ctx.db.patch(existing._id, {
+      await ctx.db.patch("deploymentInfo", existing._id, {
         currentDeploymentId: args.deploymentId,
         deployedAt: Date.now(),
       });
