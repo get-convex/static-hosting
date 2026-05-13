@@ -15,12 +15,6 @@ const rl = createInterface({
   output: process.stdout,
 });
 
-function prompt(question: string): Promise<string> {
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => resolve(answer.trim()));
-  });
-}
-
 function success(msg: string): void {
   console.log(`✓ ${msg}`);
 }
@@ -43,7 +37,9 @@ function createConvexConfig(): boolean {
     }
     // File exists but doesn't have our component - tell user to add manually
     console.log("\n⚠️  convex/convex.config.ts exists. Please add manually:");
-    console.log('   import selfHosting from "@convex-dev/static-hosting/convex.config";');
+    console.log(
+      '   import selfHosting from "@convex-dev/static-hosting/convex.config";',
+    );
     console.log("   app.use(selfHosting);\n");
     return false;
   }
@@ -57,7 +53,7 @@ const app = defineApp();
 app.use(selfHosting);
 
 export default app;
-`
+`,
   );
   success("Created convex/convex.config.ts");
   return true;
@@ -89,7 +85,7 @@ export const { generateUploadUrl, generateUploadUrls, recordAsset, recordAssets,
 // Public query for live reload notifications
 export const { getCurrentDeployment } =
   exposeDeploymentQuery(components.selfHosting);
-`
+`,
   );
   success("Created convex/staticHosting.ts");
   return true;
@@ -108,7 +104,9 @@ function createHttpFile(): boolean {
       return false;
     }
     console.log("\n⚠️  convex/http.ts exists. Please add manually:");
-    console.log('   import { registerStaticRoutes } from "@convex-dev/static-hosting";');
+    console.log(
+      '   import { registerStaticRoutes } from "@convex-dev/static-hosting";',
+    );
     console.log("   registerStaticRoutes(http, components.selfHosting);\n");
     return false;
   }
@@ -125,7 +123,7 @@ const http = httpRouter();
 registerStaticRoutes(http, components.selfHosting);
 
 export default http;
-`
+`,
   );
   success("Created convex/http.ts");
   return true;
