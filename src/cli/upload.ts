@@ -142,6 +142,20 @@ function getConvexEnv(name: string, prod: boolean): string | null {
   }
 }
 
+/**
+ * Resolve the component's mount prefix from CONVEX_SITE_URL. Returns "/" if
+ * the component isn't deployed yet or the query is unavailable.
+ */
+async function fetchBasePath(componentName: string): Promise<string> {
+  try {
+    const out = await convexRunComponentAsync(componentName, "lib:getBasePath");
+    const value = JSON.parse(out);
+    return typeof value === "string" && value.length > 0 ? value : "/";
+  } catch {
+    return "/";
+  }
+}
+
 function convexRunAsync(
   componentName: string | undefined,
   functionPath: string,
@@ -366,14 +380,18 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
+    const basePath = await fetchBasePath(args.component);
+
     const envLabel = useProd ? "production" : "development";
     console.log(`🔨 Building for ${envLabel}...`);
     console.log(`   VITE_CONVEX_URL=${convexUrl}`);
+    console.log(`   STATIC_HOSTING_BASE_PATH=${basePath}`);
     console.log("");
 
     const buildResult = spawnNpmRun("build", {
       ...process.env,
       VITE_CONVEX_URL: convexUrl,
+      STATIC_HOSTING_BASE_PATH: basePath,
     });
 
     if (buildResult !== 0) {

@@ -96,6 +96,23 @@ Examples:
 }
 
 /**
+ * Resolve the component's mount prefix from its CONVEX_SITE_URL. Returns "/"
+ * if the component isn't deployed yet or the query is unavailable.
+ */
+function fetchBasePath(componentName: string): string {
+  try {
+    const out = execSync(
+      `npx convex run --component ${componentName} lib:getBasePath '{}' --prod --typecheck=disable --codegen=disable`,
+      { stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8" },
+    ).trim();
+    const value = JSON.parse(out);
+    return typeof value === "string" && value.length > 0 ? value : "/";
+  } catch {
+    return "/";
+  }
+}
+
+/**
  * Get the production Convex URL
  */
 function getConvexProdUrl(): string | null {
@@ -223,12 +240,16 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
+    const basePath = fetchBasePath(args.component);
+
     console.log(`   Building with VITE_CONVEX_URL=${convexUrl}`);
+    console.log(`   STATIC_HOSTING_BASE_PATH=${basePath}`);
     console.log("");
 
     const buildResult = spawnNpmRun("build", {
       ...process.env,
       VITE_CONVEX_URL: convexUrl,
+      STATIC_HOSTING_BASE_PATH: basePath,
     });
 
     if (buildResult !== 0) {
