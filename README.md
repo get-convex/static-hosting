@@ -202,8 +202,20 @@ app.use(staticHosting, { httpPrefix: "/app/" });
 ```
 
 You'll also need to tell your bundler about the base path so the emitted HTML
-references the right URLs — `base: "/app/"` in `vite.config.ts`, or the
-equivalent for your bundler.
+references the right URLs. The CLI sets a `STATIC_HOSTING_BASE_PATH` env var
+matching the component's mount when it runs your build, so `vite.config.ts`
+can read it directly:
+
+```ts
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  base: process.env.STATIC_HOSTING_BASE_PATH ?? "/",
+});
+```
+
+Root-mounted apps don't need this — the default is `/`. For webpack use
+`publicPath`, for Next.js `assetPrefix`.
 
 ## How it works
 

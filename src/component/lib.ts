@@ -30,6 +30,21 @@ export const getCurrentDeployment = query({
   },
 });
 
+export const getBasePath = internalQuery({
+  args: {},
+  returns: v.string(),
+  handler: async () => {
+    const siteUrl = process.env.CONVEX_SITE_URL;
+    if (!siteUrl) return "/";
+    try {
+      const pathname = new URL(siteUrl).pathname;
+      return pathname || "/";
+    } catch {
+      return "/";
+    }
+  },
+});
+
 export const getByPath = internalQuery({
   args: { path: v.string() },
   returns: v.union(staticAssetValidator, v.null()),
