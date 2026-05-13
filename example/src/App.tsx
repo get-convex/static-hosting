@@ -10,7 +10,7 @@ function App() {
     <div className="app">
       {/* Shows a banner when a new deployment is available */}
       <UpdateBanner
-        getCurrentDeployment={api.example.getCurrentDeployment}
+        getCurrentDeployment={api.staticHosting.getCurrentDeployment}
         message="🚀 New version deployed!"
         buttonText="Refresh"
       />
@@ -78,7 +78,11 @@ function App() {
       <footer className="footer">
         <p>
           Built with{" "}
-          <a href="https://convex.dev" target="_blank" rel="noopener noreferrer">
+          <a
+            href="https://convex.dev"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             Convex
           </a>{" "}
           +{" "}
