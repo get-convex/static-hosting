@@ -16,6 +16,6 @@ node_modules
 *.swp
 .mcp.json
 next-example/
+dist/
+exmple/dist/
 
-# Note: dist/ is NOT ignored - it's committed for GitHub installs
-# (npm install github:get-convex/static-hosting#main)
