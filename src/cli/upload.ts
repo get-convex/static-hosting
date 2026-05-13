@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * CLI tool to upload static files to Convex storage.
+ * CLI tool to upload static files to a Convex static-hosting component.
  *
  * Usage:
  *   npx @convex-dev/static-hosting upload [options]
  *
  * Options:
  *   --dist <path>            Path to dist directory (default: ./dist)
- *   --component <module>     Module name where upload API is exposed — i.e. convex/<module>.ts (default: staticHosting)
+ *   --component <name>       Component instance name (default: staticHosting)
  *   --prod                   Deploy to production deployment
  *   --help                   Show help
  */
@@ -102,13 +102,11 @@ Upload static files from a dist directory to Convex storage.
 
 Options:
   -d, --dist <path>           Path to dist directory (default: ./dist)
-  -c, --component <module>    Module name where upload API is exposed — i.e.
-                              convex/<module>.ts (default: staticHosting). Not
-                              the registered component name from convex.config.ts.
+  -c, --component <name>      Static-hosting component instance name (default: staticHosting)
       --prod                  Deploy to production deployment
   -b, --build                 Run 'npm run build' with correct VITE_CONVEX_URL before uploading
       --cdn                   Upload non-HTML assets to convex-fs CDN instead of Convex storage
-      --cdn-delete-function <name>  Convex function to delete CDN blobs (default: <component>:deleteCdnBlobs)
+      --cdn-delete-function <name>  App function to delete CDN blobs (e.g. staticHosting:deleteCdnBlobs)
   -j, --concurrency <n>       Number of parallel uploads (default: 5)
   -h, --help                  Show this help message
 
@@ -145,11 +143,13 @@ function getConvexEnv(name: string, prod: boolean): string | null {
 }
 
 function convexRunAsync(
+  componentName: string | undefined,
   functionPath: string,
   args: Record<string, unknown> = {},
 ): Promise<string> {
   return runConvexAsync([
     "run",
+    ...(componentName ? ["--component", componentName] : []),
     functionPath,
     JSON.stringify(args),
     "--typecheck=disable",
@@ -194,7 +194,8 @@ async function uploadWithConcurrency(
     // Step 1: Generate all upload URLs in one batch call
     console.log(`  Generating ${storageFiles.length} upload URLs...`);
     const urlsOutput = await convexRunAsync(
-      `${componentName}:generateUploadUrls`,
+      componentName,
+      "lib:generateUploadUrls",
       { count: storageFiles.length },
     );
     const uploadUrls: string[] = JSON.parse(urlsOutput);
@@ -217,8 +218,12 @@ async function uploadWithConcurrency(
         storageIds[idx] = storageId;
         completed++;
         const isHtml = file.contentType.startsWith("text/html");
-        console.log(`  [${completed}/${total}] ${file.path} (${isHtml ? "storage/html" : "storage"})`);
-      })().then(() => { pending.delete(task); });
+        console.log(
+          `  [${completed}/${total}] ${file.path} (${isHtml ? "storage/html" : "storage"})`,
+        );
+      })().then(() => {
+        pending.delete(task);
+      });
       pending.add(task);
       if (pending.size >= concurrency) {
         await Promise.race(pending);
@@ -261,7 +266,9 @@ async function uploadWithConcurrency(
         });
         completed++;
         console.log(`  [${completed}/${total}] ${file.path} (cdn)`);
-      })().then(() => { pending.delete(task); });
+      })().then(() => {
+        pending.delete(task);
+      });
       pending.add(task);
       if (pending.size >= concurrency) {
         await Promise.race(pending);
@@ -278,7 +285,7 @@ async function uploadWithConcurrency(
     const cdnAssets = allAssets.filter((a) => a.blobId);
 
     if (storageAssets.length > 0) {
-      await convexRunAsync(`${componentName}:recordAssets`, {
+      await convexRunAsync(componentName, "lib:recordAssets", {
         assets: storageAssets.map((a) => ({
           path: a.path,
           storageId: a.storageId!,
@@ -290,7 +297,7 @@ async function uploadWithConcurrency(
 
     // CDN assets still need individual recording (they use blobId not storageId)
     for (const asset of cdnAssets) {
-      await convexRunAsync(`${componentName}:recordAsset`, {
+      await convexRunAsync(componentName, "lib:recordAsset", {
         path: asset.path,
         blobId: asset.blobId,
         contentType: asset.contentType,
@@ -396,7 +403,9 @@ async function main(): Promise<void> {
   if (useCdn) {
     siteUrl = getConvexSiteUrl(useProd);
     if (!siteUrl) {
-      console.error("Error: Could not determine Convex site URL for CDN uploads.");
+      console.error(
+        "Error: Could not determine Convex site URL for CDN uploads.",
+      );
       console.error("Make sure your Convex deployment is running.");
       process.exit(1);
     }
@@ -434,28 +443,39 @@ async function main(): Promise<void> {
   console.log("");
 
   // Garbage collect old files
-  const gcOutput = await convexRunAsync(`${componentName}:gcOldAssets`, {
+  const gcOutput = await convexRunAsync(componentName, "lib:gcOldAssets", {
     currentDeploymentId: deploymentId,
   });
   const gcResult = JSON.parse(gcOutput);
-
-  // Handle both old format (number) and new format ({ deleted, blobIds })
-  const deletedCount = typeof gcResult === "number" ? gcResult : gcResult.deleted;
-  const oldBlobIds: string[] = typeof gcResult === "object" && gcResult.blobIds ? gcResult.blobIds : [];
+  const deletedCount: number = gcResult.deleted;
+  const oldBlobIds: string[] = gcResult.blobIds ?? [];
 
   if (deletedCount > 0) {
-    console.log(`Cleaned up ${deletedCount} old storage file(s) from previous deployments`);
+    console.log(
+      `Cleaned up ${deletedCount} old storage file(s) from previous deployments`,
+    );
   }
 
-  // Clean up old CDN blobs if any
-  if (oldBlobIds.length > 0) {
-    const cdnDeleteFn = args.cdnDeleteFunction || `${componentName}:deleteCdnBlobs`;
+  // Clean up old CDN blobs if the app exposes a delete function. Component
+  // actions can't reach the deployment-root /fs/blobs endpoint, so CDN GC
+  // remains an opt-in app-level function.
+  if (oldBlobIds.length > 0 && args.cdnDeleteFunction) {
     try {
-      await convexRunAsync(cdnDeleteFn, { blobIds: oldBlobIds });
-      console.log(`Cleaned up ${oldBlobIds.length} old CDN blob(s) from previous deployments`);
+      await convexRunAsync(undefined, args.cdnDeleteFunction, {
+        blobIds: oldBlobIds,
+      });
+      console.log(
+        `Cleaned up ${oldBlobIds.length} old CDN blob(s) from previous deployments`,
+      );
     } catch {
-      console.warn(`Warning: Could not delete old CDN blobs. Make sure ${cdnDeleteFn} is defined.`);
+      console.warn(
+        `Warning: Could not delete old CDN blobs via ${args.cdnDeleteFunction}.`,
+      );
     }
+  } else if (oldBlobIds.length > 0) {
+    console.log(
+      `${oldBlobIds.length} old CDN blob(s) left in place. Pass --cdn-delete-function to clean them up.`,
+    );
   }
 
   console.log("");

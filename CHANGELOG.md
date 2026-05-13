@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.0 (Unreleased)
+
+Component-owned HTTP and storage. **Breaking — redeploy your static assets after
+upgrading.**
+
+- The component now hosts its own HTTP endpoints and owns the file storage that
+  serves them. Wire it up with `app.use(staticHosting, { httpPrefix: "/" })` and
+  delete `convex/http.ts` + the upload-API re-exports from
+  `convex/staticHosting.ts`.
+- Removed `registerStaticRoutes` and `exposeUploadApi` from the client API.
+  `exposeDeploymentQuery` and `getConvexUrl` remain if you use the UpdateBanner.
+- The component is now named `staticHosting` (previously `selfHosting`). The
+  CLI invokes it directly via `npx convex run --component staticHosting
+  lib:...`. If you mount the component under a different name, pass
+  `--component <your-name>`.
+- `useDeploymentUpdates` / `UpdateBanner` use `useQuery_experimental` and
+  default to `api.staticHosting.getCurrentDeployment`. If you don't surface
+  deployment updates, you no longer need to expose anything.
+- Assets uploaded under 0.1.x lived in the app's storage — those references
+  won't resolve in 0.2.x. Run `npx @convex-dev/static-hosting deploy` to
+  repopulate.
+
 ## 0.1.4
 
 - Added support for Windows
