@@ -24,6 +24,7 @@ interface ParsedArgs {
   skipBuild: boolean;
   skipConvex: boolean;
   cdn: boolean;
+  buildCommand: string;
 }
 
 function parseArgs(args: string[]): ParsedArgs {
@@ -34,6 +35,7 @@ function parseArgs(args: string[]): ParsedArgs {
     skipBuild: false,
     skipConvex: false,
     cdn: false,
+    buildCommand: "npm run build",
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -50,6 +52,9 @@ function parseArgs(args: string[]): ParsedArgs {
       result.skipConvex = true;
     } else if (arg === "--cdn") {
       result.cdn = true;
+    } else if (arg === "--build-command") {
+      const cmd = args[++i];
+      if (cmd) result.buildCommand = cmd;
     }
   }
 
@@ -68,6 +73,7 @@ Options:
   -c, --component <name>      Convex component name (default: staticHosting)
       --skip-build            Skip the build step (use existing dist)
       --skip-convex           Skip Convex backend deployment
+      --build-command <cmd>   Build command to run (default: 'npm run build')
       --cdn                   Upload non-HTML assets to convex-fs CDN
   -h, --help                  Show this help message
 
@@ -234,12 +240,14 @@ async function main(): Promise<void> {
 
     const basePath = fetchBasePath(args.component);
 
-    console.log(`   Building with VITE_CONVEX_URL=${convexUrl}`);
+    console.log(`   Build command: ${args.buildCommand}`);
+    console.log(`   VITE_CONVEX_URL=${convexUrl}`);
     console.log(`   STATIC_HOSTING_BASE_PATH=${basePath}`);
     console.log("");
 
-    const buildResult = spawnSync("npm", ["run", "build"], {
+    const buildResult = spawnSync(args.buildCommand, {
       stdio: "inherit",
+      shell: true,
       env: {
         ...process.env,
         VITE_CONVEX_URL: convexUrl,
