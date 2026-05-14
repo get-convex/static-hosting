@@ -15,7 +15,7 @@
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join, relative, extname, resolve } from "path";
 import { randomUUID } from "crypto";
-import { runConvex, runConvexAsync, spawnNpmRun } from "./commands.js";
+import { runConvex, runConvexAsync, spawnShell } from "./commands.js";
 
 // MIME type mapping
 const MIME_TYPES: Record<string, string> = {
@@ -49,6 +49,7 @@ interface ParsedArgs {
   component: string;
   prod: boolean;
   build: boolean;
+  buildCommand: string;
   cdn: boolean;
   cdnDeleteFunction: string;
   concurrency: number;
@@ -61,6 +62,7 @@ function parseArgs(args: string[]): ParsedArgs {
     component: "staticHosting",
     prod: false, // Default to dev, use --prod for production
     build: false,
+    buildCommand: "npm run build",
     cdn: false,
     cdnDeleteFunction: "",
     concurrency: 5,
@@ -81,6 +83,12 @@ function parseArgs(args: string[]): ParsedArgs {
       result.prod = false;
     } else if (arg === "--build" || arg === "-b") {
       result.build = true;
+    } else if (arg === "--build-command") {
+      const cmd = args[++i];
+      if (cmd) {
+        result.buildCommand = cmd;
+        result.build = true;
+      }
     } else if (arg === "--cdn") {
       result.cdn = true;
     } else if (arg === "--cdn-delete-function") {
@@ -104,7 +112,10 @@ Options:
   -d, --dist <path>           Path to dist directory (default: ./dist)
   -c, --component <name>      Static-hosting component instance name (default: staticHosting)
       --prod                  Deploy to production deployment
-  -b, --build                 Run 'npm run build' with correct VITE_CONVEX_URL before uploading
+  -b, --build                 Run the build command with VITE_CONVEX_URL +
+                              STATIC_HOSTING_BASE_PATH set before uploading
+      --build-command <cmd>   Build command to run (default: 'npm run build').
+                              Implies --build.
       --cdn                   Upload non-HTML assets to convex-fs CDN instead of Convex storage
       --cdn-delete-function <name>  App function to delete CDN blobs (e.g. staticHosting:deleteCdnBlobs)
   -j, --concurrency <n>       Number of parallel uploads (default: 5)
@@ -384,11 +395,12 @@ async function main(): Promise<void> {
 
     const envLabel = useProd ? "production" : "development";
     console.log(`🔨 Building for ${envLabel}...`);
+    console.log(`   Build command: ${args.buildCommand}`);
     console.log(`   VITE_CONVEX_URL=${convexUrl}`);
     console.log(`   STATIC_HOSTING_BASE_PATH=${basePath}`);
     console.log("");
 
-    const buildResult = spawnNpmRun("build", {
+    const buildResult = spawnShell(args.buildCommand, {
       ...process.env,
       VITE_CONVEX_URL: convexUrl,
       STATIC_HOSTING_BASE_PATH: basePath,
