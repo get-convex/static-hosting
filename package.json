@@ -26,7 +26,7 @@
     "dev:frontend": "cd example && vite --clearScreen false",
     "build:example": "cd example && vite build",
     "upload:static": "node dist/cli/index.js upload --dist ./example/dist --component staticHosting",
-    "deploy:static": "npm run build:example && npm run upload:static",
+    "deploy:static": "node dist/cli/index.js upload --dist ./example/dist --component staticHosting --build --build-command 'npm run build:example'",
     "dev:build": "chokidar 'tsconfig*.json' 'src/**/*.ts' -i '**/*.test.ts' -c 'npm run build:codegen' --initial",
     "predev": "path-exists .env.local dist || (npm run build && convex dev --once)",
     "build": "tsc --project ./tsconfig.build.json",

@@ -95,19 +95,21 @@ Examples:
 }
 
 /**
- * Resolve the component's mount prefix from its CONVEX_SITE_URL. Returns "/"
- * if the component isn't deployed yet or the query is unavailable.
+ * Resolve the component's full site URL (CONVEX_SITE_URL with mount prefix).
+ * Bails the CLI if the component isn't deployed.
  */
-function fetchBasePath(componentName: string): string {
+function fetchSiteUrl(componentName: string): string {
   try {
     const out = execSync(
-      `npx convex run --component ${componentName} lib:getBasePath '{}' --prod --typecheck=disable --codegen=disable`,
+      `npx convex run --component ${componentName} lib:getSiteUrl '{}' --prod --typecheck=disable --codegen=disable`,
       { stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8" },
     ).trim();
-    const value = JSON.parse(out);
-    return typeof value === "string" && value.length > 0 ? value : "/";
+    return JSON.parse(out);
   } catch {
-    return "/";
+    console.error(
+      `Could not reach component "${componentName}". Deploy the Convex backend first (npx convex deploy) and ensure --component matches the name in convex.config.ts.`,
+    );
+    process.exit(1);
   }
 }
 
@@ -125,7 +127,6 @@ function getConvexProdUrl(): string | null {
     // Fall back to env files
   }
 
-  // Try env files as fallback
   const envFiles = [".env.production", ".env.production.local", ".env.local"];
   for (const envFile of envFiles) {
     if (existsSync(envFile)) {
@@ -200,6 +201,8 @@ async function main(): Promise<void> {
   }
 
   // Step 2: Build frontend
+  let siteUrl: string | null = null;
+
   if (!args.skipBuild) {
     console.log("");
     console.log("Step 2: Building frontend...");
@@ -238,7 +241,8 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
-    const basePath = fetchBasePath(args.component);
+    siteUrl = fetchSiteUrl(args.component);
+    const basePath = new URL(siteUrl).pathname || "/";
 
     console.log(`   Build command: ${args.buildCommand}`);
     console.log(`   VITE_CONVEX_URL=${convexUrl}`);
@@ -320,20 +324,7 @@ async function main(): Promise<void> {
   console.log(`✨ Deployment complete! (${duration}s)`);
   console.log("");
 
-  // Show Convex site URL
-  try {
-    const result = execSync("npx convex env get CONVEX_CLOUD_URL --prod", {
-      stdio: "pipe",
-      encoding: "utf-8",
-    });
-    const cloudUrl = result.trim();
-    if (cloudUrl && cloudUrl.includes(".convex.cloud")) {
-      const siteUrl = cloudUrl.replace(".convex.cloud", ".convex.site");
-      console.log(`Frontend: ${siteUrl}`);
-    }
-  } catch {
-    // Ignore
-  }
+  console.log(`Frontend: ${siteUrl ?? fetchSiteUrl(args.component)}`);
 
   console.log("");
 }
