@@ -154,16 +154,19 @@ function getConvexEnv(name: string, prod: boolean): string | null {
 }
 
 /**
- * Resolve the component's mount prefix from CONVEX_SITE_URL. Returns "/" if
- * the component isn't deployed yet or the query is unavailable.
+ * Resolve the component's full site URL (CONVEX_SITE_URL with mount prefix).
+ * Bails the CLI if the component isn't deployed — uploading wouldn't work
+ * either, so a fallback would only hide the real problem.
  */
-async function fetchBasePath(componentName: string): Promise<string> {
+async function fetchSiteUrl(componentName: string): Promise<string> {
   try {
-    const out = await convexRunComponentAsync(componentName, "lib:getBasePath");
-    const value = JSON.parse(out);
-    return typeof value === "string" && value.length > 0 ? value : "/";
+    const out = await convexRunComponentAsync(componentName, "lib:getSiteUrl");
+    return JSON.parse(out);
   } catch {
-    return "/";
+    console.error(
+      `Could not reach component "${componentName}". Deploy the Convex backend first and ensure --component matches the name in convex.config.ts.`,
+    );
+    process.exit(1);
   }
 }
 
@@ -188,7 +191,7 @@ async function uploadWithConcurrency(
   componentName: string,
   deploymentId: string,
   useCdn: boolean,
-  siteUrl: string | null,
+  cdnUploadBase: string | null,
   concurrency: number,
 ): Promise<void> {
   const total = files.length;
@@ -198,7 +201,7 @@ async function uploadWithConcurrency(
   const storageFiles: typeof files = [];
   for (const file of files) {
     const isHtml = file.contentType.startsWith("text/html");
-    if (useCdn && !isHtml && siteUrl) {
+    if (useCdn && !isHtml && cdnUploadBase) {
       cdnFiles.push(file);
     } else {
       storageFiles.push(file);
@@ -267,12 +270,12 @@ async function uploadWithConcurrency(
   }
 
   // Upload CDN files (still uses per-file calls since CDN has its own upload endpoint)
-  if (cdnFiles.length > 0 && siteUrl) {
+  if (cdnFiles.length > 0 && cdnUploadBase) {
     const pending = new Set<Promise<void>>();
     for (const file of cdnFiles) {
       const task = (async () => {
         const content = readFileSync(file.localPath);
-        const uploadResponse = await fetch(`${siteUrl}/fs/upload`, {
+        const uploadResponse = await fetch(`${cdnUploadBase}/fs/upload`, {
           method: "POST",
           headers: { "Content-Type": file.contentType },
           body: content,
@@ -368,6 +371,11 @@ async function main(): Promise<void> {
   // Set global prod flag
   useProd = args.prod;
 
+  // Resolve where the app is served. The component knows its own mount via
+  // CONVEX_SITE_URL; on first deploy the query may not exist yet, in which
+  // case we fall back below to the deployment root only.
+  const componentSiteUrl = await fetchSiteUrl(args.component);
+
   // Run build if requested
   if (args.build) {
     let convexUrl: string | null = null;
@@ -391,7 +399,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
-    const basePath = await fetchBasePath(args.component);
+    const basePath = new URL(componentSiteUrl).pathname || "/";
 
     const envLabel = useProd ? "production" : "development";
     console.log(`🔨 Building for ${envLabel}...`);
@@ -428,18 +436,9 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // If CDN mode, we need the site URL for uploading to convex-fs
-  let siteUrl: string | null = null;
-  if (useCdn) {
-    siteUrl = getConvexSiteUrl(useProd);
-    if (!siteUrl) {
-      console.error(
-        "Error: Could not determine Convex site URL for CDN uploads.",
-      );
-      console.error("Make sure your Convex deployment is running.");
-      process.exit(1);
-    }
-  }
+  // /fs/upload lives at the deployment root, not under the component's
+  // mount prefix.
+  const cdnUploadBase = useCdn ? new URL(componentSiteUrl).origin : null;
 
   const deploymentId = randomUUID();
   const files = collectFiles(distDir, distDir);
@@ -462,7 +461,7 @@ async function main(): Promise<void> {
       componentName,
       deploymentId,
       useCdn,
-      siteUrl,
+      cdnUploadBase,
       args.concurrency,
     );
   } catch {
@@ -511,29 +510,8 @@ async function main(): Promise<void> {
   console.log("");
   console.log("✨ Upload complete!");
 
-  // Show the deployment URL
-  const deployedSiteUrl = getConvexSiteUrl(useProd);
-  if (deployedSiteUrl) {
-    console.log("");
-    console.log(`Your app is now available at: ${deployedSiteUrl}`);
-  }
-}
-
-/**
- * Get the Convex site URL (.convex.site)
- */
-function getConvexSiteUrl(prod: boolean): string | null {
-  const siteUrl = getConvexEnv("CONVEX_SITE_URL", prod);
-  if (siteUrl) {
-    return siteUrl;
-  }
-
-  const cloudUrl = getConvexEnv("CONVEX_CLOUD_URL", prod);
-  if (cloudUrl?.includes(".convex.cloud")) {
-    return cloudUrl.replace(".convex.cloud", ".convex.site");
-  }
-
-  return null;
+  console.log("");
+  console.log(`Your app is now available at: ${componentSiteUrl}`);
 }
 
 main().catch((error) => {
