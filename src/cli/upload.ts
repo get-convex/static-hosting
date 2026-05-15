@@ -7,7 +7,7 @@
  *
  * Options:
  *   --dist <path>            Path to dist directory (default: ./dist)
- *   --component <name>       Convex component with upload functions (default: staticHosting)
+ *   --component <module>     Module name where upload API is exposed — i.e. convex/<module>.ts (default: staticHosting)
  *   --prod                   Deploy to production deployment
  *   --help                   Show help
  */
@@ -102,7 +102,9 @@ Upload static files from a dist directory to Convex storage.
 
 Options:
   -d, --dist <path>           Path to dist directory (default: ./dist)
-  -c, --component <name>      Convex component with upload functions (default: staticHosting)
+  -c, --component <module>    Module name where upload API is exposed — i.e.
+                              convex/<module>.ts (default: staticHosting). Not
+                              the registered component name from convex.config.ts.
       --prod                  Deploy to production deployment
   -b, --build                 Run 'npm run build' with correct VITE_CONVEX_URL before uploading
       --cdn                   Upload non-HTML assets to convex-fs CDN instead of Convex storage

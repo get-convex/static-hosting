@@ -65,7 +65,9 @@ Minimizes the inconsistency window between backend and frontend updates.
 
 Options:
   -d, --dist <path>           Path to dist directory (default: ./dist)
-  -c, --component <name>      Convex component name (default: staticHosting)
+  -c, --component <module>    Module name where upload API is exposed — i.e.
+                              convex/<module>.ts (default: staticHosting). Not
+                              the registered component name from convex.config.ts.
       --skip-build            Skip the build step (use existing dist)
       --skip-convex           Skip Convex backend deployment
       --cdn                   Upload non-HTML assets to convex-fs CDN
