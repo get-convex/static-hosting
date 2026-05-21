@@ -15,7 +15,7 @@
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join, relative, extname, resolve } from "path";
 import { randomUUID } from "crypto";
-import { runConvex, runConvexAsync, spawnShell } from "./commands.js";
+import { runConvexAsync, spawnShell } from "./commands.js";
 
 // MIME type mapping
 const MIME_TYPES: Record<string, string> = {
@@ -135,32 +135,21 @@ Examples:
 // Global flag for production mode
 let useProd = true;
 
-function getEnvFileConvexUrl(): string | null {
-  if (!existsSync(".env.local")) {
-    return null;
-  }
-
-  const envContent = readFileSync(".env.local", "utf-8");
-  const match = envContent.match(/(?:VITE_)?CONVEX_URL=(.+)/);
-  return match?.[1]?.trim() || null;
-}
-
-function getConvexEnv(name: string, prod: boolean): string | null {
-  try {
-    return runConvex(["env", "get", name, ...(prod ? ["--prod"] : [])]) || null;
-  } catch {
-    return null;
-  }
+interface DeploymentUrls {
+  /** CONVEX_SITE_URL — includes the component's mount prefix. */
+  siteUrl: string;
+  /** CONVEX_CLOUD_URL — backend URL the frontend connects to. */
+  cloudUrl: string;
 }
 
 /**
- * Resolve the component's full site URL (CONVEX_SITE_URL with mount prefix).
- * Bails the CLI if the component isn't deployed — uploading wouldn't work
- * either, so a fallback would only hide the real problem.
+ * Resolve the component's deployment URLs. Bails the CLI if the component
+ * isn't deployed — uploading wouldn't work either, so a fallback would only
+ * hide the real problem.
  */
-async function fetchSiteUrl(componentName: string): Promise<string> {
+async function fetchUrls(componentName: string): Promise<DeploymentUrls> {
   try {
-    const out = await convexRunComponentAsync(componentName, "lib:getSiteUrl");
+    const out = await convexRunAsync(componentName, "lib:getUrls");
     return JSON.parse(out);
   } catch {
     console.error(
@@ -371,34 +360,15 @@ async function main(): Promise<void> {
   // Set global prod flag
   useProd = args.prod;
 
-  // Resolve where the app is served. The component knows its own mount via
-  // CONVEX_SITE_URL; on first deploy the query may not exist yet, in which
-  // case we fall back below to the deployment root only.
-  const componentSiteUrl = await fetchSiteUrl(args.component);
+  // The component knows both its CONVEX_SITE_URL (where the app is served,
+  // including the mount prefix) and CONVEX_CLOUD_URL (what the frontend
+  // connects to). We fetch both in one call and trust neither hostname.
+  const { siteUrl: componentSiteUrl, cloudUrl: convexUrl } = await fetchUrls(
+    args.component,
+  );
 
   // Run build if requested
   if (args.build) {
-    let convexUrl: string | null = null;
-
-    if (useProd) {
-      convexUrl = getConvexEnv("CONVEX_CLOUD_URL", true);
-      if (!convexUrl) {
-        console.error("Could not get production Convex URL.");
-        console.error(
-          "Make sure you have deployed to production: npx convex deploy",
-        );
-        process.exit(1);
-      }
-    } else {
-      convexUrl =
-        getConvexEnv("CONVEX_CLOUD_URL", false) ?? getEnvFileConvexUrl();
-    }
-
-    if (!convexUrl) {
-      console.error("Could not determine Convex URL for build.");
-      process.exit(1);
-    }
-
     const basePath = new URL(componentSiteUrl).pathname || "/";
 
     const envLabel = useProd ? "production" : "development";
