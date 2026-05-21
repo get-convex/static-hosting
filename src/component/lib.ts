@@ -30,17 +30,22 @@ export const getCurrentDeployment = query({
   },
 });
 
-// Returns the URL where the static site is served (CONVEX_SITE_URL, which
-// includes the component's mount prefix). The CLI uses this to:
-//   - derive STATIC_HOSTING_BASE_PATH for the bundler
-//   - print where the deployed app lives
-//   - resolve the deployment root for platform endpoints like /fs/upload
-export const getSiteUrl = internalQuery({
+// Returns the deployment URLs visible to this component:
+//   siteUrl  - CONVEX_SITE_URL (includes the component's mount prefix). Used
+//              by the CLI to derive STATIC_HOSTING_BASE_PATH and to show
+//              where the deployed app lives.
+//   cloudUrl - CONVEX_CLOUD_URL. Used by the CLI as VITE_CONVEX_URL when
+//              building the frontend.
+export const getUrls = internalQuery({
   args: {},
-  returns: v.string(),
-  handler: async () => {
-    return process.env.CONVEX_SITE_URL!;
-  },
+  returns: v.object({
+    siteUrl: v.string(),
+    cloudUrl: v.string(),
+  }),
+  handler: async () => ({
+    siteUrl: process.env.CONVEX_SITE_URL!,
+    cloudUrl: process.env.CONVEX_CLOUD_URL!,
+  }),
 });
 
 export const getByPath = internalQuery({
