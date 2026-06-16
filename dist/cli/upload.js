@@ -7,14 +7,14 @@
  *
  * Options:
  *   --dist <path>            Path to dist directory (default: ./dist)
- *   --component <name>       Convex component with upload functions (default: staticHosting)
+ *   --component <module>     Module name where upload API is exposed — i.e. convex/<module>.ts (default: staticHosting)
  *   --prod                   Deploy to production deployment
  *   --help                   Show help
  */
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join, relative, extname, resolve } from "path";
 import { randomUUID } from "crypto";
-import { execSync, execFile, spawnSync } from "child_process";
+import { runConvex, runConvexAsync, spawnNpmRun } from "./commands.js";
 // MIME type mapping
 const MIME_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -93,7 +93,9 @@ Upload static files from a dist directory to Convex storage.
 
 Options:
   -d, --dist <path>           Path to dist directory (default: ./dist)
-  -c, --component <name>      Convex component with upload functions (default: staticHosting)
+  -c, --component <module>    Module name where upload API is exposed — i.e.
+                              convex/<module>.ts (default: staticHosting). Not
+                              the registered component name from convex.config.ts.
       --prod                  Deploy to production deployment
   -b, --build                 Run 'npm run build' with correct VITE_CONVEX_URL before uploading
       --cdn                   Upload non-HTML assets to convex-fs CDN instead of Convex storage
@@ -113,44 +115,31 @@ Examples:
 }
 // Global flag for production mode
 let useProd = true;
-function _convexRun(functionPath, args = {}) {
-    const argsJson = JSON.stringify(args);
-    const prodFlag = useProd ? "--prod" : "";
-    const cmd = `npx convex run "${functionPath}" '${argsJson}' ${prodFlag} --typecheck=disable --codegen=disable`;
-    try {
-        const result = execSync(cmd, {
-            encoding: "utf-8",
-            stdio: ["pipe", "pipe", "pipe"],
-        });
-        return result.trim();
+function getEnvFileConvexUrl() {
+    if (!existsSync(".env.local")) {
+        return null;
     }
-    catch (error) {
-        const execError = error;
-        console.error("Convex run failed:", execError.stderr || execError.stdout);
-        throw error;
+    const envContent = readFileSync(".env.local", "utf-8");
+    const match = envContent.match(/(?:VITE_)?CONVEX_URL=(.+)/);
+    return match?.[1]?.trim() || null;
+}
+function getConvexEnv(name, prod) {
+    try {
+        return runConvex(["env", "get", name, ...(prod ? ["--prod"] : [])]) || null;
+    }
+    catch {
+        return null;
     }
 }
 function convexRunAsync(functionPath, args = {}) {
-    return new Promise((resolve, reject) => {
-        const cmdArgs = [
-            "convex",
-            "run",
-            functionPath,
-            JSON.stringify(args),
-            "--typecheck=disable",
-            "--codegen=disable",
-        ];
-        if (useProd)
-            cmdArgs.push("--prod");
-        execFile("npx", cmdArgs, { encoding: "utf-8" }, (error, stdout, stderr) => {
-            if (error) {
-                console.error("Convex run failed:", stderr || stdout);
-                reject(error);
-                return;
-            }
-            resolve(stdout.trim());
-        });
-    });
+    return runConvexAsync([
+        "run",
+        functionPath,
+        JSON.stringify(args),
+        "--typecheck=disable",
+        "--codegen=disable",
+        ...(useProd ? ["--prod"] : []),
+    ]);
 }
 async function uploadWithConcurrency(files, componentName, deploymentId, useCdn, siteUrl, concurrency) {
     const total = files.length;
@@ -295,32 +284,16 @@ async function main() {
     if (args.build) {
         let convexUrl = null;
         if (useProd) {
-            // Get production URL from convex dashboard
-            try {
-                const result = execSync("npx convex dashboard --prod --no-open", {
-                    stdio: "pipe",
-                    encoding: "utf-8",
-                });
-                const match = result.match(/dashboard\.convex\.dev\/d\/([a-z0-9-]+)/i);
-                if (match) {
-                    convexUrl = `https://${match[1]}.convex.cloud`;
-                }
-            }
-            catch {
+            convexUrl = getConvexEnv("CONVEX_CLOUD_URL", true);
+            if (!convexUrl) {
                 console.error("Could not get production Convex URL.");
                 console.error("Make sure you have deployed to production: npx convex deploy");
                 process.exit(1);
             }
         }
         else {
-            // Get dev URL from .env.local
-            if (existsSync(".env.local")) {
-                const envContent = readFileSync(".env.local", "utf-8");
-                const match = envContent.match(/(?:VITE_)?CONVEX_URL=(.+)/);
-                if (match) {
-                    convexUrl = match[1].trim();
-                }
-            }
+            convexUrl =
+                getConvexEnv("CONVEX_CLOUD_URL", false) ?? getEnvFileConvexUrl();
         }
         if (!convexUrl) {
             console.error("Could not determine Convex URL for build.");
@@ -330,11 +303,11 @@ async function main() {
         console.log(`🔨 Building for ${envLabel}...`);
         console.log(`   VITE_CONVEX_URL=${convexUrl}`);
         console.log("");
-        const buildResult = spawnSync("npm", ["run", "build"], {
-            stdio: "inherit",
-            env: { ...process.env, VITE_CONVEX_URL: convexUrl },
+        const buildResult = spawnNpmRun("build", {
+            ...process.env,
+            VITE_CONVEX_URL: convexUrl,
         });
-        if (buildResult.status !== 0) {
+        if (buildResult !== 0) {
             console.error("Build failed.");
             process.exit(1);
         }
@@ -410,22 +383,16 @@ async function main() {
     }
 }
 /**
- * Get the Convex site URL (.convex.site) from the cloud URL
+ * Get the Convex site URL (.convex.site)
  */
 function getConvexSiteUrl(prod) {
-    try {
-        const envFlag = prod ? "--prod" : "";
-        const result = execSync(`npx convex env get CONVEX_CLOUD_URL ${envFlag}`, {
-            stdio: "pipe",
-            encoding: "utf-8",
-        });
-        const cloudUrl = result.trim();
-        if (cloudUrl && cloudUrl.includes(".convex.cloud")) {
-            return cloudUrl.replace(".convex.cloud", ".convex.site");
-        }
+    const siteUrl = getConvexEnv("CONVEX_SITE_URL", prod);
+    if (siteUrl) {
+        return siteUrl;
     }
-    catch {
-        // Ignore errors
+    const cloudUrl = getConvexEnv("CONVEX_CLOUD_URL", prod);
+    if (cloudUrl?.includes(".convex.cloud")) {
+        return cloudUrl.replace(".convex.cloud", ".convex.site");
     }
     return null;
 }
