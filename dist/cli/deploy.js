@@ -14,7 +14,7 @@
  */
 import { existsSync, readFileSync } from "fs";
 import { resolve } from "path";
-import { execSync, spawnSync } from "child_process";
+import { runConvex, spawnConvex, spawnNpmRun, spawnStaticHostingCli, } from "./commands.js";
 function parseArgs(args) {
     const result = {
         dist: "./dist",
@@ -56,7 +56,9 @@ Minimizes the inconsistency window between backend and frontend updates.
 
 Options:
   -d, --dist <path>           Path to dist directory (default: ./dist)
-  -c, --component <name>      Convex component name (default: staticHosting)
+  -c, --component <module>    Module name where upload API is exposed — i.e.
+                              convex/<module>.ts (default: staticHosting). Not
+                              the registered component name from convex.config.ts.
       --skip-build            Skip the build step (use existing dist)
       --skip-convex           Skip Convex backend deployment
       --cdn                   Upload non-HTML assets to convex-fs CDN
@@ -83,11 +85,7 @@ Examples:
  */
 function getConvexProdUrl() {
     try {
-        const result = execSync("npx convex env get CONVEX_CLOUD_URL --prod", {
-            stdio: "pipe",
-            encoding: "utf-8",
-        });
-        return result.trim() || null;
+        return runConvex(["env", "get", "CONVEX_CLOUD_URL", "--prod"]) || null;
     }
     catch {
         // Fall back to env files
@@ -105,6 +103,14 @@ function getConvexProdUrl() {
     }
     return null;
 }
+function getConvexProdSiteUrl() {
+    try {
+        return runConvex(["env", "get", "CONVEX_SITE_URL", "--prod"]) || null;
+    }
+    catch {
+        return null;
+    }
+}
 /**
  * Run the Convex storage upload flow
  */
@@ -115,7 +121,6 @@ async function uploadToConvexStorage(distDir, componentName, useCdn) {
         : "📦 Uploading static files to Convex storage...");
     console.log("");
     const uploadArgs = [
-        "@convex-dev/static-hosting",
         "upload",
         "--dist",
         distDir,
@@ -126,8 +131,8 @@ async function uploadToConvexStorage(distDir, componentName, useCdn) {
     if (useCdn) {
         uploadArgs.push("--cdn");
     }
-    const result = spawnSync("npx", uploadArgs, { stdio: "inherit" });
-    return result.status === 0;
+    const result = spawnStaticHostingCli(uploadArgs);
+    return result === 0;
 }
 async function main() {
     const args = parseArgs(process.argv.slice(2));
@@ -157,10 +162,8 @@ async function main() {
         if (!convexUrl && !args.skipConvex) {
             console.log("   Deploying Convex backend first to get production URL...");
             console.log("");
-            const convexResult = spawnSync("npx", ["convex", "deploy"], {
-                stdio: "inherit",
-            });
-            if (convexResult.status !== 0) {
+            const convexResult = spawnConvex(["deploy"]);
+            if (convexResult !== 0) {
                 console.error("");
                 console.error("❌ Convex deployment failed");
                 process.exit(1);
@@ -184,11 +187,11 @@ async function main() {
         }
         console.log(`   Building with VITE_CONVEX_URL=${convexUrl}`);
         console.log("");
-        const buildResult = spawnSync("npm", ["run", "build"], {
-            stdio: "inherit",
-            env: { ...process.env, VITE_CONVEX_URL: convexUrl },
+        const buildResult = spawnNpmRun("build", {
+            ...process.env,
+            VITE_CONVEX_URL: convexUrl,
         });
-        if (buildResult.status !== 0) {
+        if (buildResult !== 0) {
             console.error("");
             console.error("❌ Build failed");
             process.exit(1);
@@ -205,10 +208,8 @@ async function main() {
         console.log("");
         console.log("Step 3: Deploying Convex backend...");
         console.log("");
-        const convexResult = spawnSync("npx", ["convex", "deploy"], {
-            stdio: "inherit",
-        });
-        if (convexResult.status !== 0) {
+        const convexResult = spawnConvex(["deploy"]);
+        if (convexResult !== 0) {
             console.error("");
             console.error("❌ Convex deployment failed");
             process.exit(1);
@@ -242,20 +243,9 @@ async function main() {
     console.log("═══════════════════════════════════════════════════════════");
     console.log(`✨ Deployment complete! (${duration}s)`);
     console.log("");
-    // Show Convex site URL
-    try {
-        const result = execSync("npx convex env get CONVEX_CLOUD_URL --prod", {
-            stdio: "pipe",
-            encoding: "utf-8",
-        });
-        const cloudUrl = result.trim();
-        if (cloudUrl && cloudUrl.includes(".convex.cloud")) {
-            const siteUrl = cloudUrl.replace(".convex.cloud", ".convex.site");
-            console.log(`Frontend: ${siteUrl}`);
-        }
-    }
-    catch {
-        // Ignore
+    const siteUrl = getConvexProdSiteUrl();
+    if (siteUrl) {
+        console.log(`Frontend: ${siteUrl}`);
     }
     console.log("");
 }
