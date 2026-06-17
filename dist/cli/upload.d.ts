@@ -7,7 +7,7 @@
  *
  * Options:
  *   --dist <path>            Path to dist directory (default: ./dist)
- *   --component <name>       Convex component with upload functions (default: staticHosting)
+ *   --component <module>     Module name where upload API is exposed — i.e. convex/<module>.ts (default: staticHosting)
  *   --prod                   Deploy to production deployment
  *   --help                   Show help
  */
