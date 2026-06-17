@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.4
+
+- Added support for Windows
+
 ## 0.1.3
 
 - Fix missing README in published package
@@ -14,7 +18,8 @@
 - Non-HTML assets can be served from CDN edge network via convex-fs
 - New `cdnBaseUrl` option on `registerStaticRoutes`
 - Schema: `storageId` now optional, new `blobId` field for CDN assets
-- `gcOldAssets` returns `{ deleted, blobIds }` (breaking change from number return)
+- `gcOldAssets` returns `{ deleted, blobIds }` (breaking change from number
+  return)
 
 ## 0.1.2-alpha.1
 
