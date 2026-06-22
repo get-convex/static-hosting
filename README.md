@@ -135,23 +135,9 @@ For more control, you can run the two halves separately:
 ```bash
 npx convex deploy
 npx @convex-dev/static-hosting upload --build --prod
-
+```
 
 Your app is live at `https://<deployment>.convex.site`.
-
-### Non-Vite bundlers
-
-The `--build` flag sets `VITE_CONVEX_URL` for your build. To use a different
-env var (Expo, Next.js, etc.), wrap your build script so the value passes
-through:
-
-```json
-// Expo
-"build": "EXPO_PUBLIC_CONVEX_URL=${VITE_CONVEX_URL:-$EXPO_PUBLIC_CONVEX_URL} npx expo export --platform web"
-
-// Next.js
-"build": "NEXT_PUBLIC_CONVEX_URL=${VITE_CONVEX_URL:-$NEXT_PUBLIC_CONVEX_URL} next build"
-```
 
 ### CLI options
 
