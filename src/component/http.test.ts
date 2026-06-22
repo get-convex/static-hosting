@@ -141,7 +141,7 @@ describe("static file serving", () => {
       "text/html; charset=utf-8",
     );
     // Record the deployment with SPA fallback off (what `upload --no-spa` does).
-    await t.mutation(internal.lib.gcOldAssets, {
+    await t.mutation(internal.lib.commitDeployment, {
       currentDeploymentId: "deploy-1",
       spaFallback: false,
     });

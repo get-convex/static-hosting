@@ -179,7 +179,11 @@ export const recordAssets = internalMutation({
   },
 });
 
-export const gcOldAssets = internalMutation({
+// Commits a finished upload as the current deployment: records the deployment
+// id + SPA config, then garbage-collects assets left over from previous
+// deployments. Returns the storage cleanup tally plus any CDN blobIds the
+// caller should delete (component actions can't reach the /fs blobs endpoint).
+export const commitDeployment = internalMutation({
   args: {
     currentDeploymentId: v.string(),
     // Whether to serve SPA fallback for this deployment (default true).

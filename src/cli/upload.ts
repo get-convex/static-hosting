@@ -449,11 +449,13 @@ async function main(): Promise<void> {
 
   console.log("");
 
-  // Garbage collect old files and record this deployment's SPA config.
-  const gcOutput = await convexRunAsync(componentName, "lib:gcOldAssets", {
-    currentDeploymentId: deploymentId,
-    spaFallback: args.spaFallback,
-  });
+  // Commit the deployment: record it as current (with SPA config) and GC
+  // assets from previous deployments.
+  const gcOutput = await convexRunAsync(
+    componentName,
+    "lib:commitDeployment",
+    { currentDeploymentId: deploymentId, spaFallback: args.spaFallback },
+  );
   const gcResult = JSON.parse(gcOutput);
   const deletedCount: number = gcResult.deleted;
   const oldBlobIds: string[] = gcResult.blobIds ?? [];

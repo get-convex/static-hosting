@@ -37,9 +37,9 @@ describe("component lib", () => {
     expect(assets).toHaveLength(0);
   });
 
-  test("gcOldAssets on empty db returns zero", async () => {
+  test("commitDeployment on empty db returns zero", async () => {
     const t = initConvexTest();
-    const result = await t.mutation(internal.lib.gcOldAssets, {
+    const result = await t.mutation(internal.lib.commitDeployment, {
       currentDeploymentId: "deploy-1",
     });
     expect(result.deleted).toBe(0);
@@ -70,7 +70,7 @@ describe("component lib", () => {
     expect(second?.blobId).toBe("blob-456");
   });
 
-  test("gcOldAssets returns blobIds for old CDN assets and bumps deployment", async () => {
+  test("commitDeployment returns blobIds for old CDN assets and bumps deployment", async () => {
     const t = initConvexTest();
 
     await t.mutation(internal.lib.recordAsset, {
@@ -80,7 +80,7 @@ describe("component lib", () => {
       deploymentId: "deploy-old",
     });
 
-    const result = await t.mutation(internal.lib.gcOldAssets, {
+    const result = await t.mutation(internal.lib.commitDeployment, {
       currentDeploymentId: "deploy-new",
     });
     expect(result.deleted).toBe(0);
@@ -112,5 +112,65 @@ describe("component lib", () => {
 
     const all = await t.query(internal.lib.listAssets, {});
     expect(all).toHaveLength(2);
+  });
+
+  describe("resolveAsset", () => {
+    async function seedIndex(t: ReturnType<typeof initConvexTest>) {
+      await t.mutation(internal.lib.recordAsset, {
+        path: "/index.html",
+        blobId: "blob-index",
+        contentType: "text/html; charset=utf-8",
+        deploymentId: "deploy-1",
+      });
+    }
+
+    test("returns the exact match when present", async () => {
+      const t = initConvexTest();
+      await t.mutation(internal.lib.recordAsset, {
+        path: "/assets/app-B71cUw87.js",
+        blobId: "blob-app",
+        contentType: "application/javascript; charset=utf-8",
+        deploymentId: "deploy-1",
+      });
+
+      const asset = await t.query(internal.lib.resolveAsset, {
+        path: "/assets/app-B71cUw87.js",
+      });
+      expect(asset?.path).toBe("/assets/app-B71cUw87.js");
+    });
+
+    test("falls back to index.html for extension-less misses by default", async () => {
+      const t = initConvexTest();
+      await seedIndex(t);
+
+      const asset = await t.query(internal.lib.resolveAsset, {
+        path: "/dashboard/settings",
+      });
+      expect(asset?.path).toBe("/index.html");
+    });
+
+    test("does not fall back for paths with an extension", async () => {
+      const t = initConvexTest();
+      await seedIndex(t);
+
+      const asset = await t.query(internal.lib.resolveAsset, {
+        path: "/missing.js",
+      });
+      expect(asset).toBeNull();
+    });
+
+    test("does not fall back when the deployment disables it", async () => {
+      const t = initConvexTest();
+      await seedIndex(t);
+      await t.mutation(internal.lib.commitDeployment, {
+        currentDeploymentId: "deploy-1",
+        spaFallback: false,
+      });
+
+      const asset = await t.query(internal.lib.resolveAsset, {
+        path: "/dashboard",
+      });
+      expect(asset).toBeNull();
+    });
   });
 });
