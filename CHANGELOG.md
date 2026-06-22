@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 (Unreleased)
+## 0.2.0 Alpha
 
 Component-owned HTTP and storage. **Breaking — redeploy your static assets after
 upgrading.**
@@ -11,9 +11,9 @@ upgrading.**
   `convex/staticHosting.ts`.
 - Removed `registerStaticRoutes` and `exposeUploadApi` from the client API.
   `exposeDeploymentQuery` and `getConvexUrl` remain if you use the UpdateBanner.
-- The component is now named `staticHosting` (previously `selfHosting`). The
-  CLI invokes it directly via `npx convex run --component staticHosting
-  lib:...`. If you mount the component under a different name, pass
+- The component is now named `staticHosting` (previously `selfHosting`). The CLI
+  invokes it directly via `npx convex run --component staticHosting lib:...`. If
+  you mount the component under a different name, pass
   `--component <your-name>`.
 - `useDeploymentUpdates` / `UpdateBanner` use `useQuery_experimental` and
   default to `api.staticHosting.getCurrentDeployment`. If you don't surface
@@ -43,7 +43,8 @@ upgrading.**
 - Non-HTML assets can be served from CDN edge network via convex-fs
 - New `cdnBaseUrl` option on `registerStaticRoutes`
 - Schema: `storageId` now optional, new `blobId` field for CDN assets
-- `gcOldAssets` returns `{ deleted, blobIds }` (breaking change from number return)
+- `gcOldAssets` returns `{ deleted, blobIds }` (breaking change from number
+  return)
 
 ## 0.1.2-alpha.1
 
