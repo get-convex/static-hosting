@@ -314,23 +314,54 @@ Removed from the client API: `registerStaticRoutes` and `exposeUploadApi`.
 
 ### Side-by-side migration (no downtime)
 
-Because components are isolated by mount name, you can run the old and new
-versions simultaneously and cut over when you're ready:
+You can run 0.1.x and 0.2.x at the same time and cut over when the new mount is
+verified. The two don't collide: the 0.1.x component is named `selfHosting` and
+serves via your app's `convex/http.ts`, while 0.2.x is named `staticHosting` and
+serves itself. The catch is that both ship from the same package name, so
+install the old one under an **npm alias**:
 
-1. Keep the existing 0.1.x install serving traffic at the root.
-2. Install 0.2.x under a second mount, temporarily at a sub-path:
+1. Install the new version, and the old one aliased to a distinct slug:
 
-   ```ts
-   const app = defineApp({ httpPrefix: "/api" });
-   app.use(staticHosting, { httpPrefix: "/next/", env: {} }); // new, staged here first
+   ```bash
+   npm install @convex-dev/static-hosting@^0.2.0
+   npm install static-hosting-legacy@npm:@convex-dev/static-hosting@0.1.3
    ```
 
-3. Deploy assets to the new mount and verify it at `/next/`.
-4. Flip the prefixes — move the new mount to `/` and retire the old one — then
-   remove the 0.1.x install and its `convex/http.ts`.
+2. Mount both in `convex/convex.config.ts`, importing the legacy config from the
+   alias and staging the new mount at a sub-path:
 
-(If you also need both package versions installed at once, alias one in
-`package.json`, e.g. `"static-hosting-legacy": "npm:@convex-dev/static-hosting@0.1.3"`.)
+   ```ts
+   import { defineApp } from "convex/server";
+   import staticHostingLegacy from "static-hosting-legacy/convex.config.js";
+   import staticHosting from "@convex-dev/static-hosting/convex.config.js";
+
+   const app = defineApp();
+   app.use(staticHostingLegacy); // 0.1.x — keeps serving the live site
+   app.use(staticHosting, { httpPrefix: "/next/" }); // 0.2.x — staged here first
+
+   export default app;
+   ```
+
+3. Keep your existing `convex/http.ts` registering the **legacy** routes at the
+   root, importing `registerStaticRoutes` from the alias:
+
+   ```ts
+   import { registerStaticRoutes } from "static-hosting-legacy";
+   import { components } from "./_generated/api";
+
+   registerStaticRoutes(http, components.selfHosting);
+   ```
+
+4. Deploy assets to the new mount and verify them at `/next/`:
+
+   ```bash
+   npx @convex-dev/static-hosting deploy   # targets the staticHosting component
+   ```
+
+5. **Cut over:** delete the legacy `registerStaticRoutes` call (and
+   `convex/http.ts` if it's now empty), drop `app.use(staticHostingLegacy)`,
+   change the new mount to `httpPrefix: "/"`, and redeploy. Once traffic is
+   served by 0.2.x, remove the `static-hosting-legacy` dependency.
 
 ## Troubleshooting
 
