@@ -465,10 +465,11 @@ async function main(): Promise<void> {
 
   console.log("");
 
-  // Garbage collect old files and record this deployment's SPA config.
+  // Commit the deployment: record it as current (with SPA config) and GC
+  // assets from previous deployments.
   const gcOutput = await convexRunComponentAsync(
     componentName,
-    "lib:gcOldAssets",
+    "lib:commitDeployment",
     { currentDeploymentId: deploymentId, spaFallback: args.spaFallback },
   );
   const gcResult = JSON.parse(gcOutput);
