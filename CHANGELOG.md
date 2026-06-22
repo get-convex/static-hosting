@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.2.0 Alpha
+
+Component-owned HTTP and storage. **Breaking — redeploy your static assets after
+upgrading.**
+
+- The component now hosts its own HTTP endpoints and owns the file storage that
+  serves them. Wire it up with `app.use(staticHosting, { httpPrefix: "/" })` and
+  delete `convex/http.ts` + the upload-API re-exports from
+  `convex/staticHosting.ts`.
+- Removed `registerStaticRoutes` and `exposeUploadApi` from the client API.
+  `exposeDeploymentQuery` and `getConvexUrl` remain if you use the UpdateBanner.
+- The component is now named `staticHosting` (previously `selfHosting`). The CLI
+  invokes it directly via `npx convex run --component staticHosting lib:...`. If
+  you mount the component under a different name, pass
+  `--component <your-name>`.
+- `useDeploymentUpdates` / `UpdateBanner` use `useQuery_experimental` and
+  default to `api.staticHosting.getCurrentDeployment`. If you don't surface
+  deployment updates, you no longer need to expose anything.
+- Assets uploaded under 0.1.x lived in the app's storage — those references
+  won't resolve in 0.2.x. Run `npx @convex-dev/static-hosting deploy` to
+  repopulate.
+- Recommended setup now prefixes your own HTTP routes with
+  `defineApp({ httpPrefix: "/api" })` so the static site can own the root
+  without the catch-all route shadowing them.
+- SPA fallback is now configurable per deployment. Deploy with `--no-spa`
+  (`deploy` or `upload`) to make extension-less misses return 404 instead of
+  `index.html`. The setting is stored on the deployment record, so it travels
+  with the code you ship.
+- The `cdnBaseUrl` override (from the removed `registerStaticRoutes`) is not
+  carried forward. In CDN mode, blob redirects always point at the deployment's
+  own `{origin}/fs/blobs`; pointing them at a separate CDN host is no longer
+  configurable. File an issue if you need it back.
+
 ## 0.1.4
 
 - Added support for Windows

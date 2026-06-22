@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { UpdateBanner } from "@convex-dev/static-hosting/react";
-import { api } from "../convex/_generated/api";
 import "./App.css";
 
 function App() {
@@ -8,12 +7,8 @@ function App() {
 
   return (
     <div className="app">
-      {/* Shows a banner when a new deployment is available */}
-      <UpdateBanner
-        getCurrentDeployment={api.staticHosting.getCurrentDeployment}
-        message="🚀 New version deployed!"
-        buttonText="Refresh"
-      />
+      {/* Resolves convex/staticHosting.ts:getCurrentDeployment by default. */}
+      <UpdateBanner message="🚀 New version deployed!" buttonText="Refresh" />
 
       <header className="header">
         <h1>🚀 Convex Static Hosting</h1>

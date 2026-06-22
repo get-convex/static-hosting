@@ -1,8 +1,8 @@
 "use client";
 
-import { useQuery } from "convex/react";
+import { useQuery_experimental } from "convex/react";
 import { useState, useMemo, type CSSProperties, type JSX } from "react";
-import type { FunctionReference } from "convex/server";
+import { makeFunctionReference, type FunctionReference } from "convex/server";
 
 type DeploymentInfo = {
   _id: string;
@@ -11,61 +11,70 @@ type DeploymentInfo = {
   deployedAt: number;
 } | null;
 
+type DeploymentQueryRef = FunctionReference<
+  "query",
+  "public",
+  Record<string, never>,
+  DeploymentInfo
+>;
+
+const DEFAULT_QUERY_REF = makeFunctionReference<
+  "query",
+  Record<string, never>,
+  DeploymentInfo
+>("staticHosting:getCurrentDeployment") as DeploymentQueryRef;
+
+/* eslint-disable react-refresh/only-export-components */
+
 /**
  * Hook to detect when a new deployment is available.
- * Shows a prompt to the user instead of auto-reloading.
  *
- * @param getCurrentDeployment - The query function reference from exposeDeploymentQuery
- * @returns Object with update status and reload function
+ * @param getCurrentDeployment - Optional query reference. Defaults to
+ *   `api.staticHosting.getCurrentDeployment` (resolved by path). If you've
+ *   re-exported the deployment query under a different module name, pass the
+ *   reference explicitly.
  *
  * @example
  * ```tsx
  * import { useDeploymentUpdates } from "@convex-dev/static-hosting/react";
- * import { api } from "../convex/_generated/api";
  *
  * function App() {
- *   const { updateAvailable, reload } = useDeploymentUpdates(
- *     api.staticHosting.getCurrentDeployment
- *   );
- *
- *   return (
- *     <div>
- *       {updateAvailable && (
- *         <div className="update-banner">
- *           A new version is available!
- *           <button onClick={reload}>Reload</button>
- *         </div>
- *       )}
- *       {/* rest of your app *\/}
- *     </div>
- *   );
+ *   const { updateAvailable, reload } = useDeploymentUpdates();
+ *   return updateAvailable ? <button onClick={reload}>Reload</button> : null;
  * }
  * ```
  */
 export function useDeploymentUpdates(
-  getCurrentDeployment: FunctionReference<"query", "public", Record<string, never>, DeploymentInfo>,
+  getCurrentDeployment?: DeploymentQueryRef,
 ) {
-  const deployment = useQuery(getCurrentDeployment, {});
-  const [initialDeploymentId, setInitialDeploymentId] = useState<string | null>(null);
-  const [dismissedDeploymentId, setDismissedDeploymentId] = useState<string | null>(null);
+  const result = useQuery_experimental({
+    query: getCurrentDeployment ?? DEFAULT_QUERY_REF,
+    args: {},
+  });
 
-  // Capture the initial deployment ID on first load
-  // Using useState with functional update to avoid stale closure issues
+  const deployment = result.status === "success" ? result.data : null;
+  const setupError =
+    result.status === "error"
+      ? deploymentQuerySetupHelp(getCurrentDeployment)
+      : null;
+
+  const [initialDeploymentId, setInitialDeploymentId] = useState<string | null>(
+    null,
+  );
+  const [dismissedDeploymentId, setDismissedDeploymentId] = useState<
+    string | null
+  >(null);
+
   if (deployment && initialDeploymentId === null) {
-    // This is safe - we're setting initial state based on first data load
-    // It only runs once when deployment first becomes available
     setInitialDeploymentId(deployment.currentDeploymentId);
   }
 
-  // Derive updateAvailable from current state
   const updateAvailable = useMemo(() => {
-    if (!deployment || initialDeploymentId === null) {
-      return false;
-    }
-    // Show update if deployment changed from initial AND user hasn't dismissed this one
-    const hasNewDeployment = deployment.currentDeploymentId !== initialDeploymentId;
-    const isDismissed = deployment.currentDeploymentId === dismissedDeploymentId;
-    return hasNewDeployment && !isDismissed;
+    if (!deployment || initialDeploymentId === null) return false;
+    const hasNew = deployment.currentDeploymentId !== initialDeploymentId;
+    const isDismissed =
+      deployment.currentDeploymentId === dismissedDeploymentId;
+    return hasNew && !isDismissed;
   }, [deployment, initialDeploymentId, dismissedDeploymentId]);
 
   const reload = () => {
@@ -79,36 +88,42 @@ export function useDeploymentUpdates(
   };
 
   return {
-    /** True when a new deployment is available */
     updateAvailable,
-    /** Reload the page to get the new version */
     reload,
-    /** Dismiss the update notification (until next deploy) */
     dismiss,
-    /** The current deployment info (or null if not yet loaded) */
     deployment,
+    /**
+     * When set, the deployment query isn't exported from the app — the banner
+     * won't work until the user wires it up. The string is suitable to render
+     * during local development so the missing setup is obvious.
+     */
+    setupError,
   };
 }
 
+function deploymentQuerySetupHelp(ref: DeploymentQueryRef | undefined): string {
+  if (ref) {
+    return "Deployment query failed. Verify the function you passed to useDeploymentUpdates is deployed.";
+  }
+  return [
+    "@convex-dev/static-hosting: UpdateBanner requires you to expose the deployment query.",
+    "Create convex/staticHosting.ts:",
+    "",
+    '  import { exposeDeploymentQuery } from "@convex-dev/static-hosting";',
+    '  import { components } from "./_generated/api";',
+    "  export const { getCurrentDeployment } = exposeDeploymentQuery(",
+    "    components.staticHosting,",
+    "  );",
+  ].join("\n");
+}
+
 /**
- * A ready-to-use update banner component.
- * Displays a notification when a new deployment is available.
+ * Ready-to-use banner shown when a new deployment is available.
  *
  * @example
  * ```tsx
  * import { UpdateBanner } from "@convex-dev/static-hosting/react";
- * import { api } from "../convex/_generated/api";
- *
- * function App() {
- *   return (
- *     <div>
- *       <UpdateBanner
- *         getCurrentDeployment={api.staticHosting.getCurrentDeployment}
- *       />
- *       {/* rest of your app *\/}
- *     </div>
- *   );
- * }
+ * <UpdateBanner />
  * ```
  */
 export function UpdateBanner({
@@ -119,14 +134,22 @@ export function UpdateBanner({
   className,
   style,
 }: {
-  getCurrentDeployment: FunctionReference<"query", "public", Record<string, never>, DeploymentInfo>;
+  getCurrentDeployment?: DeploymentQueryRef;
   message?: string;
   buttonText?: string;
   dismissable?: boolean;
   className?: string;
   style?: CSSProperties;
-}): JSX.Element | null {
-  const { updateAvailable, reload, dismiss } = useDeploymentUpdates(getCurrentDeployment);
+} = {}): JSX.Element | null {
+  const { updateAvailable, reload, dismiss, setupError } =
+    useDeploymentUpdates(getCurrentDeployment);
+
+  if (setupError) {
+    if (typeof console !== "undefined") {
+      console.warn(setupError);
+    }
+    return null;
+  }
 
   if (!updateAvailable) return null;
 

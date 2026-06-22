@@ -9,7 +9,7 @@
   "bugs": {
     "url": "https://github.com/get-convex/static-hosting/issues"
   },
-  "version": "0.1.4",
+  "version": "0.2.0-alpha.0",
   "license": "Apache-2.0",
   "keywords": [
     "convex",
@@ -26,7 +26,7 @@
     "dev:frontend": "cd example && vite --clearScreen false",
     "build:example": "cd example && vite build",
     "upload:static": "node dist/cli/index.js upload --dist ./example/dist --component staticHosting",
-    "deploy:static": "npm run build:example && npm run upload:static",
+    "deploy:static": "node dist/cli/index.js upload --dist ./example/dist --component staticHosting --build --build-command 'npm run build:example'",
     "dev:build": "chokidar 'tsconfig*.json' 'src/**/*.ts' -i '**/*.test.ts' -c 'npm run build:codegen' --initial",
     "predev": "path-exists .env.local dist || (npm run build && convex dev --once)",
     "build": "tsc --project ./tsconfig.build.json",
@@ -39,6 +39,7 @@
     "test:watch": "vitest --typecheck --clearScreen false",
     "test:debug": "vitest --inspect-brk --no-file-parallelism",
     "test:coverage": "vitest run --coverage --coverage.reporter=text",
+    "prepare": "npm run build",
     "preversion": "npm ci && npm run build:clean && run-p test lint typecheck",
     "alpha": "npm version prerelease --preid alpha && npm publish --tag alpha && git push --follow-tags",
     "release": "npm version patch && npm publish && git push --follow-tags",
@@ -88,7 +89,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
     "chokidar-cli": "3.0.0",
-    "convex": "1.38.0",
+    "convex": "1.39.1",
     "convex-test": "0.0.40",
     "cpy-cli": "^7.0.0",
     "eslint": "9.39.1",

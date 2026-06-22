@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * CLI tool to upload static files to Convex storage.
+ * CLI tool to upload static files to a Convex static-hosting component.
  *
  * Usage:
  *   npx @convex-dev/static-hosting upload [options]
  *
  * Options:
  *   --dist <path>            Path to dist directory (default: ./dist)
- *   --component <module>     Module name where upload API is exposed — i.e. convex/<module>.ts (default: staticHosting)
+ *   --component <name>       Component instance name (default: staticHosting)
  *   --prod                   Deploy to production deployment
  *   --help                   Show help
  */
@@ -15,7 +15,7 @@
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join, relative, extname, resolve } from "path";
 import { randomUUID } from "crypto";
-import { runConvex, runConvexAsync, spawnNpmRun } from "./commands.js";
+import { runConvexAsync, spawnShell } from "./commands.js";
 
 // MIME type mapping
 const MIME_TYPES: Record<string, string> = {
@@ -49,9 +49,11 @@ interface ParsedArgs {
   component: string;
   prod: boolean;
   build: boolean;
+  buildCommand: string;
   cdn: boolean;
   cdnDeleteFunction: string;
   concurrency: number;
+  spaFallback: boolean;
   help: boolean;
 }
 
@@ -61,9 +63,11 @@ function parseArgs(args: string[]): ParsedArgs {
     component: "staticHosting",
     prod: false, // Default to dev, use --prod for production
     build: false,
+    buildCommand: "npm run build",
     cdn: false,
     cdnDeleteFunction: "",
     concurrency: 5,
+    spaFallback: true,
     help: false,
   };
 
@@ -81,6 +85,16 @@ function parseArgs(args: string[]): ParsedArgs {
       result.prod = false;
     } else if (arg === "--build" || arg === "-b") {
       result.build = true;
+    } else if (arg === "--build-command") {
+      const cmd = args[++i];
+      if (cmd) {
+        result.buildCommand = cmd;
+        result.build = true;
+      }
+    } else if (arg === "--no-spa") {
+      result.spaFallback = false;
+    } else if (arg === "--spa") {
+      result.spaFallback = true;
     } else if (arg === "--cdn") {
       result.cdn = true;
     } else if (arg === "--cdn-delete-function") {
@@ -102,13 +116,16 @@ Upload static files from a dist directory to Convex storage.
 
 Options:
   -d, --dist <path>           Path to dist directory (default: ./dist)
-  -c, --component <module>    Module name where upload API is exposed — i.e.
-                              convex/<module>.ts (default: staticHosting). Not
-                              the registered component name from convex.config.ts.
+  -c, --component <name>      Static-hosting component instance name (default: staticHosting)
       --prod                  Deploy to production deployment
-  -b, --build                 Run 'npm run build' with correct VITE_CONVEX_URL before uploading
+  -b, --build                 Run the build command with VITE_CONVEX_URL +
+                              STATIC_HOSTING_BASE_PATH set before uploading
+      --build-command <cmd>   Build command to run (default: 'npm run build').
+                              Implies --build.
+      --no-spa                Disable SPA fallback for this deployment (return a
+                              404 instead of falling back to /index.html)
       --cdn                   Upload non-HTML assets to convex-fs CDN instead of Convex storage
-      --cdn-delete-function <name>  Convex function to delete CDN blobs (default: <component>:deleteCdnBlobs)
+      --cdn-delete-function <name>  App function to delete CDN blobs (e.g. staticHosting:deleteCdnBlobs)
   -j, --concurrency <n>       Number of parallel uploads (default: 5)
   -h, --help                  Show this help message
 
@@ -126,30 +143,38 @@ Examples:
 // Global flag for production mode
 let useProd = true;
 
-function getEnvFileConvexUrl(): string | null {
-  if (!existsSync(".env.local")) {
-    return null;
-  }
-
-  const envContent = readFileSync(".env.local", "utf-8");
-  const match = envContent.match(/(?:VITE_)?CONVEX_URL=(.+)/);
-  return match?.[1]?.trim() || null;
+interface DeploymentUrls {
+  /** CONVEX_SITE_URL — includes the component's mount prefix. */
+  siteUrl: string;
+  /** CONVEX_CLOUD_URL — backend URL the frontend connects to. */
+  cloudUrl: string;
 }
 
-function getConvexEnv(name: string, prod: boolean): string | null {
+/**
+ * Resolve the component's deployment URLs. Bails the CLI if the component
+ * isn't deployed — uploading wouldn't work either, so a fallback would only
+ * hide the real problem.
+ */
+async function fetchUrls(componentName: string): Promise<DeploymentUrls> {
   try {
-    return runConvex(["env", "get", name, ...(prod ? ["--prod"] : [])]) || null;
+    const out = await convexRunAsync(componentName, "lib:getUrls");
+    return JSON.parse(out);
   } catch {
-    return null;
+    console.error(
+      `Could not reach component "${componentName}". Deploy the Convex backend first and ensure --component matches the name in convex.config.ts.`,
+    );
+    process.exit(1);
   }
 }
 
 function convexRunAsync(
+  componentName: string | undefined,
   functionPath: string,
   args: Record<string, unknown> = {},
 ): Promise<string> {
   return runConvexAsync([
     "run",
+    ...(componentName ? ["--component", componentName] : []),
     functionPath,
     JSON.stringify(args),
     "--typecheck=disable",
@@ -163,7 +188,7 @@ async function uploadWithConcurrency(
   componentName: string,
   deploymentId: string,
   useCdn: boolean,
-  siteUrl: string | null,
+  cdnUploadBase: string | null,
   concurrency: number,
 ): Promise<void> {
   const total = files.length;
@@ -173,7 +198,7 @@ async function uploadWithConcurrency(
   const storageFiles: typeof files = [];
   for (const file of files) {
     const isHtml = file.contentType.startsWith("text/html");
-    if (useCdn && !isHtml && siteUrl) {
+    if (useCdn && !isHtml && cdnUploadBase) {
       cdnFiles.push(file);
     } else {
       storageFiles.push(file);
@@ -194,7 +219,8 @@ async function uploadWithConcurrency(
     // Step 1: Generate all upload URLs in one batch call
     console.log(`  Generating ${storageFiles.length} upload URLs...`);
     const urlsOutput = await convexRunAsync(
-      `${componentName}:generateUploadUrls`,
+      componentName,
+      "lib:generateUploadUrls",
       { count: storageFiles.length },
     );
     const uploadUrls: string[] = JSON.parse(urlsOutput);
@@ -217,8 +243,12 @@ async function uploadWithConcurrency(
         storageIds[idx] = storageId;
         completed++;
         const isHtml = file.contentType.startsWith("text/html");
-        console.log(`  [${completed}/${total}] ${file.path} (${isHtml ? "storage/html" : "storage"})`);
-      })().then(() => { pending.delete(task); });
+        console.log(
+          `  [${completed}/${total}] ${file.path} (${isHtml ? "storage/html" : "storage"})`,
+        );
+      })().then(() => {
+        pending.delete(task);
+      });
       pending.add(task);
       if (pending.size >= concurrency) {
         await Promise.race(pending);
@@ -237,12 +267,12 @@ async function uploadWithConcurrency(
   }
 
   // Upload CDN files (still uses per-file calls since CDN has its own upload endpoint)
-  if (cdnFiles.length > 0 && siteUrl) {
+  if (cdnFiles.length > 0 && cdnUploadBase) {
     const pending = new Set<Promise<void>>();
     for (const file of cdnFiles) {
       const task = (async () => {
         const content = readFileSync(file.localPath);
-        const uploadResponse = await fetch(`${siteUrl}/fs/upload`, {
+        const uploadResponse = await fetch(`${cdnUploadBase}/fs/upload`, {
           method: "POST",
           headers: { "Content-Type": file.contentType },
           body: content,
@@ -261,7 +291,9 @@ async function uploadWithConcurrency(
         });
         completed++;
         console.log(`  [${completed}/${total}] ${file.path} (cdn)`);
-      })().then(() => { pending.delete(task); });
+      })().then(() => {
+        pending.delete(task);
+      });
       pending.add(task);
       if (pending.size >= concurrency) {
         await Promise.race(pending);
@@ -278,7 +310,7 @@ async function uploadWithConcurrency(
     const cdnAssets = allAssets.filter((a) => a.blobId);
 
     if (storageAssets.length > 0) {
-      await convexRunAsync(`${componentName}:recordAssets`, {
+      await convexRunAsync(componentName, "lib:recordAssets", {
         assets: storageAssets.map((a) => ({
           path: a.path,
           storageId: a.storageId!,
@@ -290,7 +322,7 @@ async function uploadWithConcurrency(
 
     // CDN assets still need individual recording (they use blobId not storageId)
     for (const asset of cdnAssets) {
-      await convexRunAsync(`${componentName}:recordAsset`, {
+      await convexRunAsync(componentName, "lib:recordAsset", {
         path: asset.path,
         blobId: asset.blobId,
         contentType: asset.contentType,
@@ -336,37 +368,28 @@ async function main(): Promise<void> {
   // Set global prod flag
   useProd = args.prod;
 
+  // The component knows both its CONVEX_SITE_URL (where the app is served,
+  // including the mount prefix) and CONVEX_CLOUD_URL (what the frontend
+  // connects to). We fetch both in one call and trust neither hostname.
+  const { siteUrl: componentSiteUrl, cloudUrl: convexUrl } = await fetchUrls(
+    args.component,
+  );
+
   // Run build if requested
   if (args.build) {
-    let convexUrl: string | null = null;
-
-    if (useProd) {
-      convexUrl = getConvexEnv("CONVEX_CLOUD_URL", true);
-      if (!convexUrl) {
-        console.error("Could not get production Convex URL.");
-        console.error(
-          "Make sure you have deployed to production: npx convex deploy",
-        );
-        process.exit(1);
-      }
-    } else {
-      convexUrl =
-        getConvexEnv("CONVEX_CLOUD_URL", false) ?? getEnvFileConvexUrl();
-    }
-
-    if (!convexUrl) {
-      console.error("Could not determine Convex URL for build.");
-      process.exit(1);
-    }
+    const basePath = new URL(componentSiteUrl).pathname || "/";
 
     const envLabel = useProd ? "production" : "development";
     console.log(`🔨 Building for ${envLabel}...`);
+    console.log(`   Build command: ${args.buildCommand}`);
     console.log(`   VITE_CONVEX_URL=${convexUrl}`);
+    console.log(`   STATIC_HOSTING_BASE_PATH=${basePath}`);
     console.log("");
 
-    const buildResult = spawnNpmRun("build", {
+    const buildResult = spawnShell(args.buildCommand, {
       ...process.env,
       VITE_CONVEX_URL: convexUrl,
+      STATIC_HOSTING_BASE_PATH: basePath,
     });
 
     if (buildResult !== 0) {
@@ -391,16 +414,9 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // If CDN mode, we need the site URL for uploading to convex-fs
-  let siteUrl: string | null = null;
-  if (useCdn) {
-    siteUrl = getConvexSiteUrl(useProd);
-    if (!siteUrl) {
-      console.error("Error: Could not determine Convex site URL for CDN uploads.");
-      console.error("Make sure your Convex deployment is running.");
-      process.exit(1);
-    }
-  }
+  // /fs/upload lives at the deployment root, not under the component's
+  // mount prefix.
+  const cdnUploadBase = useCdn ? new URL(componentSiteUrl).origin : null;
 
   const deploymentId = randomUUID();
   const files = collectFiles(distDir, distDir);
@@ -423,7 +439,7 @@ async function main(): Promise<void> {
       componentName,
       deploymentId,
       useCdn,
-      siteUrl,
+      cdnUploadBase,
       args.concurrency,
     );
   } catch {
@@ -433,57 +449,50 @@ async function main(): Promise<void> {
 
   console.log("");
 
-  // Garbage collect old files
-  const gcOutput = await convexRunAsync(`${componentName}:gcOldAssets`, {
-    currentDeploymentId: deploymentId,
-  });
+  // Commit the deployment: record it as current (with SPA config) and GC
+  // assets from previous deployments.
+  const gcOutput = await convexRunAsync(
+    componentName,
+    "lib:commitDeployment",
+    { currentDeploymentId: deploymentId, spaFallback: args.spaFallback },
+  );
   const gcResult = JSON.parse(gcOutput);
-
-  // Handle both old format (number) and new format ({ deleted, blobIds })
-  const deletedCount = typeof gcResult === "number" ? gcResult : gcResult.deleted;
-  const oldBlobIds: string[] = typeof gcResult === "object" && gcResult.blobIds ? gcResult.blobIds : [];
+  const deletedCount: number = gcResult.deleted;
+  const oldBlobIds: string[] = gcResult.blobIds ?? [];
 
   if (deletedCount > 0) {
-    console.log(`Cleaned up ${deletedCount} old storage file(s) from previous deployments`);
+    console.log(
+      `Cleaned up ${deletedCount} old storage file(s) from previous deployments`,
+    );
   }
 
-  // Clean up old CDN blobs if any
-  if (oldBlobIds.length > 0) {
-    const cdnDeleteFn = args.cdnDeleteFunction || `${componentName}:deleteCdnBlobs`;
+  // Clean up old CDN blobs if the app exposes a delete function. Component
+  // actions can't reach the deployment-root /fs/blobs endpoint, so CDN GC
+  // remains an opt-in app-level function.
+  if (oldBlobIds.length > 0 && args.cdnDeleteFunction) {
     try {
-      await convexRunAsync(cdnDeleteFn, { blobIds: oldBlobIds });
-      console.log(`Cleaned up ${oldBlobIds.length} old CDN blob(s) from previous deployments`);
+      await convexRunAsync(undefined, args.cdnDeleteFunction, {
+        blobIds: oldBlobIds,
+      });
+      console.log(
+        `Cleaned up ${oldBlobIds.length} old CDN blob(s) from previous deployments`,
+      );
     } catch {
-      console.warn(`Warning: Could not delete old CDN blobs. Make sure ${cdnDeleteFn} is defined.`);
+      console.warn(
+        `Warning: Could not delete old CDN blobs via ${args.cdnDeleteFunction}.`,
+      );
     }
+  } else if (oldBlobIds.length > 0) {
+    console.log(
+      `${oldBlobIds.length} old CDN blob(s) left in place. Pass --cdn-delete-function to clean them up.`,
+    );
   }
 
   console.log("");
   console.log("✨ Upload complete!");
 
-  // Show the deployment URL
-  const deployedSiteUrl = getConvexSiteUrl(useProd);
-  if (deployedSiteUrl) {
-    console.log("");
-    console.log(`Your app is now available at: ${deployedSiteUrl}`);
-  }
-}
-
-/**
- * Get the Convex site URL (.convex.site)
- */
-function getConvexSiteUrl(prod: boolean): string | null {
-  const siteUrl = getConvexEnv("CONVEX_SITE_URL", prod);
-  if (siteUrl) {
-    return siteUrl;
-  }
-
-  const cloudUrl = getConvexEnv("CONVEX_CLOUD_URL", prod);
-  if (cloudUrl?.includes(".convex.cloud")) {
-    return cloudUrl.replace(".convex.cloud", ".convex.site");
-  }
-
-  return null;
+  console.log("");
+  console.log(`Your app is now available at: ${componentSiteUrl}`);
 }
 
 main().catch((error) => {
