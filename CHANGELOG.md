@@ -28,6 +28,10 @@ upgrading.**
   (`deploy` or `upload`) to make extension-less misses return 404 instead of
   `index.html`. The setting is stored on the deployment record, so it travels
   with the code you ship.
+- The `cdnBaseUrl` override (from the removed `registerStaticRoutes`) is not
+  carried forward. In CDN mode, blob redirects always point at the deployment's
+  own `{origin}/fs/blobs`; pointing them at a separate CDN host is no longer
+  configurable. File an issue if you need it back.
 
 ## 0.1.4
 
