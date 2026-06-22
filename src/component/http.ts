@@ -49,7 +49,7 @@ function isHtmlContentType(contentType: string): boolean {
 // apps where unknown paths should be misses.
 //   app.use(staticHosting, { env: { STATIC_HOSTING_SPA_FALLBACK: "disabled" } })
 export function isSpaFallbackEnabled(): boolean {
-  return env.STATIC_HOSTING_SPA_FALLBACK?.trim().toLowerCase() !== "disabled";
+  return env.STATIC_HOSTING_SPA_FALLBACK !== "disabled";
 }
 
 export function cacheControlFor(path: string): string {
