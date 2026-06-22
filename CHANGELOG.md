@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 (Unreleased)
+## 0.2.0 Alpha
 
 Component-owned HTTP and storage. **Breaking — redeploy your static assets after
 upgrading.**
@@ -11,9 +11,9 @@ upgrading.**
   `convex/staticHosting.ts`.
 - Removed `registerStaticRoutes` and `exposeUploadApi` from the client API.
   `exposeDeploymentQuery` and `getConvexUrl` remain if you use the UpdateBanner.
-- The component is now named `staticHosting` (previously `selfHosting`). The
-  CLI invokes it directly via `npx convex run --component staticHosting
-  lib:...`. If you mount the component under a different name, pass
+- The component is now named `staticHosting` (previously `selfHosting`). The CLI
+  invokes it directly via `npx convex run --component staticHosting lib:...`. If
+  you mount the component under a different name, pass
   `--component <your-name>`.
 - `useDeploymentUpdates` / `UpdateBanner` use `useQuery_experimental` and
   default to `api.staticHosting.getCurrentDeployment`. If you don't surface
