@@ -312,13 +312,18 @@ component itself, so the app no longer registers routes or owns the files.
 Removed from the client API: `registerStaticRoutes` and `exposeUploadApi`.
 `exposeDeploymentQuery` and `getConvexUrl` remain.
 
-### Side-by-side migration (no downtime)
+### Side-by-side migration (seamless cutover)
 
-You can run 0.1.x and 0.2.x at the same time and cut over when the new mount is
-verified. The two don't collide: the 0.1.x component is named `selfHosting` and
-serves via your app's `convex/http.ts`, while 0.2.x is named `staticHosting` and
-serves itself. The catch is that both ship from the same package name, so
-install the old one under an **npm alias**:
+You can run 0.1.x and 0.2.x at the same time and make the final switch a single
+mount change with **no re-upload** — so `/` is correct the instant the new mount
+goes live and the old version keeps serving until then. The trick is to upload
+assets built for the *final* base path (`/`) ahead of the flip, so the cutover
+just exposes assets that are already correct.
+
+The two versions don't collide: 0.1.x is named `selfHosting` and serves via your
+app's `convex/http.ts`, while 0.2.x is named `staticHosting` and serves itself.
+Both ship from the same package name, so install the old one under an **npm
+alias**:
 
 1. Install the new version, and the old one aliased to a distinct slug:
 
@@ -336,7 +341,7 @@ install the old one under an **npm alias**:
    import staticHosting from "@convex-dev/static-hosting/convex.config.js";
 
    const app = defineApp();
-   app.use(staticHostingLegacy); // 0.1.x — keeps serving the live site
+   app.use(staticHostingLegacy); // 0.1.x — keeps serving the live site at /
    app.use(staticHosting, { httpPrefix: "/next/" }); // 0.2.x — staged here first
 
    export default app;
@@ -352,16 +357,32 @@ install the old one under an **npm alias**:
    registerStaticRoutes(http, components.selfHosting);
    ```
 
-4. Deploy assets to the new mount and verify them at `/next/`:
+4. Build for the **final** base path (`/`, the default) and upload that to the
+   new component **without** `--build` — so the CLI uploads your `/`-based dist
+   as-is instead of rebuilding it for `/next/`:
 
    ```bash
-   npx @convex-dev/static-hosting deploy   # targets the staticHosting component
+   npm run build                                # base "/", the eventual mount
+   npx @convex-dev/static-hosting upload --prod # uploads dist as-is, no rebuild
    ```
 
-5. **Cut over:** delete the legacy `registerStaticRoutes` call (and
-   `convex/http.ts` if it's now empty), drop `app.use(staticHostingLegacy)`,
-   change the new mount to `httpPrefix: "/"`, and redeploy. Once traffic is
-   served by 0.2.x, remove the `static-hosting-legacy` dependency.
+   > Don't use `deploy` or `upload --build` here: those set
+   > `STATIC_HOSTING_BASE_PATH` from the *current* mount (`/next/`), which is the
+   > opposite of what you want. You're deliberately uploading `/`-based assets.
+
+   Because the assets reference the absolute root (`/assets/…`), the app won't
+   be fully clickable at `/next/` — that root is still owned by the old version.
+   `/next/` is a smoke test (the component is mounted, serves `index.html`, and
+   the files exist at `/next/assets/…`), not a full preview. That's the price of
+   a re-upload-free cutover.
+
+5. **Cut over** with a single deploy: delete the legacy `registerStaticRoutes`
+   call (and `convex/http.ts` if it's now empty), drop
+   `app.use(staticHostingLegacy)`, change the new mount to `httpPrefix: "/"`, and
+   `npx convex deploy`. The new component already holds the `/`-based assets, so
+   `/` is correct immediately — no rebuild, no re-upload, no asset-less window.
+   Once traffic is served by 0.2.x, remove the `static-hosting-legacy`
+   dependency.
 
 ## Troubleshooting
 
