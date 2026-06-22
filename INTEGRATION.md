@@ -282,6 +282,24 @@ export default defineConfig({
 Root-mounted apps don't need this — the default is `/`. Webpack/Next.js
 equivalents: `publicPath` and `assetPrefix`.
 
+## SPA routing
+
+Requests for an extension-less path that doesn't match an uploaded file fall
+back to `index.html`, so client-side routes survive a reload. Paths with an
+extension (e.g. `/missing.js`) always 404 when not found. To turn the fallback
+off for a multi-page app (unknown paths become real 404s), bind the component's
+`STATIC_HOSTING_SPA_FALLBACK` env var where you mount it:
+
+```typescript
+app.use(staticHosting, {
+  httpPrefix: "/",
+  env: { STATIC_HOSTING_SPA_FALLBACK: "disabled" },
+});
+```
+
+The env var accepts `"enabled"` (default) or `"disabled"`; unset keeps the
+fallback on. (Component env vars require `convex` ≥ 1.39.)
+
 ## Troubleshooting
 
 ### 404s on every path

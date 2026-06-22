@@ -1,5 +1,5 @@
 import { httpRouter } from "convex/server";
-import { httpAction } from "./_generated/server.js";
+import { env, httpAction } from "./_generated/server.js";
 import { internal } from "./_generated/api.js";
 
 const MIME_TYPES: Record<string, string> = {
@@ -24,23 +24,38 @@ const MIME_TYPES: Record<string, string> = {
   ".xml": "application/xml",
 };
 
-function getMimeType(path: string): string {
+export function getMimeType(path: string): string {
   const ext = path.substring(path.lastIndexOf(".")).toLowerCase();
   return MIME_TYPES[ext] || "application/octet-stream";
 }
 
-function hasFileExtension(path: string): boolean {
+export function hasFileExtension(path: string): boolean {
   const lastSegment = path.split("/").pop() || "";
   return lastSegment.includes(".") && !lastSegment.startsWith(".");
 }
 
 // Vite hashed asset suffix: e.g. `index-lj_vq_aF.js`, `style-B71cUw87.css`
-function isHashedAsset(path: string): boolean {
+export function isHashedAsset(path: string): boolean {
   return /[-.][\dA-Za-z_]{6,12}\.[a-z]+$/.test(path);
 }
 
 function isHtmlContentType(contentType: string): boolean {
   return contentType.startsWith("text/html");
+}
+
+// SPA fallback (serving /index.html for extension-less paths that don't match
+// a file) is on by default. Bind the STATIC_HOSTING_SPA_FALLBACK env var to
+// "disabled" to turn it off and return 404s instead — useful for multi-page
+// apps where unknown paths should be misses.
+//   app.use(staticHosting, { env: { STATIC_HOSTING_SPA_FALLBACK: "disabled" } })
+export function isSpaFallbackEnabled(): boolean {
+  return env.STATIC_HOSTING_SPA_FALLBACK?.trim().toLowerCase() !== "disabled";
+}
+
+export function cacheControlFor(path: string): string {
+  return isHashedAsset(path)
+    ? "public, max-age=31536000, immutable"
+    : "public, max-age=0, must-revalidate";
 }
 
 function getSetupHtml(): string {
@@ -122,7 +137,7 @@ function getSetupHtml(): string {
 // CONVEX_SITE_URL reflects the component's mount point (including any httpPrefix).
 // We use it to strip the prefix from incoming request paths so lookups in
 // the asset table remain relative to the component (e.g. `/index.html`).
-function getMountPrefix(): string {
+export function getMountPrefix(): string {
   const siteUrl = process.env.CONVEX_SITE_URL;
   if (!siteUrl) return "";
   try {
@@ -148,7 +163,7 @@ const serveStaticFile = httpAction(async (ctx, request) => {
 
   let asset = await ctx.runQuery(internal.lib.getByPath, { path });
 
-  if (!asset && !hasFileExtension(path)) {
+  if (!asset && isSpaFallbackEnabled() && !hasFileExtension(path)) {
     asset = await ctx.runQuery(internal.lib.getByPath, { path: "/index.html" });
   }
 
@@ -171,9 +186,7 @@ const serveStaticFile = httpAction(async (ctx, request) => {
   // lives at the deployment root (not under the component's prefix).
   if (asset.blobId && !isHtmlContentType(contentType)) {
     const redirectUrl = `${url.origin}/fs/blobs/${asset.blobId}`;
-    const cacheControl = isHashedAsset(path)
-      ? "public, max-age=31536000, immutable"
-      : "public, max-age=0, must-revalidate";
+    const cacheControl = cacheControlFor(path);
     return new Response(null, {
       status: 302,
       headers: { Location: redirectUrl, "Cache-Control": cacheControl },
@@ -189,9 +202,7 @@ const serveStaticFile = httpAction(async (ctx, request) => {
 
   const etag = `"${asset.storageId}"`;
   const ifNoneMatch = request.headers.get("If-None-Match");
-  const cacheControl = isHashedAsset(path)
-    ? "public, max-age=31536000, immutable"
-    : "public, max-age=0, must-revalidate";
+  const cacheControl = cacheControlFor(path);
 
   if (ifNoneMatch === etag) {
     return new Response(null, {

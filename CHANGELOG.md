@@ -24,6 +24,12 @@ upgrading.**
 - Recommended setup now prefixes your own HTTP routes with
   `defineApp({ httpPrefix: "/api" })` so the static site can own the root
   without the catch-all route shadowing them.
+- SPA fallback is now configurable via a env var. The component declares a
+  `STATIC_HOSTING_SPA_FALLBACK` env var (`"enabled"` default / `"disabled"`);
+  bind it per-mount via `app.use(staticHosting, { env: { ... } })` to make
+  extension-less misses return 404 instead of `index.html`. Because the
+  component declares an env var, `app.use` now requires an `env` object (pass
+  `env: {}` for defaults). Requires `convex` ≥ 1.39.
 
 ## 0.1.4
 
