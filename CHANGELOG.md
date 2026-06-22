@@ -21,6 +21,9 @@ upgrading.**
 - Assets uploaded under 0.1.x lived in the app's storage — those references
   won't resolve in 0.2.x. Run `npx @convex-dev/static-hosting deploy` to
   repopulate.
+- Recommended setup now prefixes your own HTTP routes with
+  `defineApp({ httpPrefix: "/api" })` so the static site can own the root
+  without the catch-all route shadowing them.
 
 ## 0.1.3
 

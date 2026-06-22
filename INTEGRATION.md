@@ -43,15 +43,26 @@ This is the only required app-side file.
 import { defineApp } from "convex/server";
 import staticHosting from "@convex-dev/static-hosting/convex.config";
 
-const app = defineApp();
-app.use(staticHosting, { httpPrefix: "/" });
+// Serve your own HTTP endpoints (convex/http.ts) under /api so the static
+// site can own the root.
+const app = defineApp({ httpPrefix: "/api" });
+// `env` is required because the component declares (optional) env vars; leave
+// it `{}` for defaults. See "SPA routing" below to override.
+app.use(staticHosting, { httpPrefix: "/", env: {} });
 
 export default app;
 ```
 
-`httpPrefix: "/"` serves the static site at the deployment root. To host under
-a sub-path instead (e.g. if you have your own HTTP routes at the root), use
-`httpPrefix: "/app/"` and set your bundler's base path to match.
+The static site is mounted at `/` with a catch-all route, so it would shadow
+any HTTP endpoints you define at the root. Passing `httpPrefix: "/api"` to
+`defineApp` relocates your own `convex/http.ts` routes to `/api/...`, leaving
+the root for the static site; call those endpoints from the frontend at
+`/api/...`. If you have no custom HTTP routes the prefix is harmless, and
+keeping it avoids a collision the first time you add one.
+
+To host the static site itself under a sub-path instead, use
+`app.use(staticHosting, { httpPrefix: "/app/" })` and set your bundler's base
+path to match (see [Mounting under a sub-path](#mounting-under-a-sub-path)).
 
 > Run `npx convex dev` after editing `convex.config.ts` so codegen picks up the
 > component.
@@ -161,7 +172,7 @@ import staticHosting from "@convex-dev/static-hosting/convex.config";
 import fs from "convex-fs/convex.config";
 
 const app = defineApp();
-app.use(staticHosting, { httpPrefix: "/" });
+app.use(staticHosting, { httpPrefix: "/", env: {} });
 app.use(fs);
 
 export default app;
