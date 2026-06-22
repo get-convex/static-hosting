@@ -55,15 +55,22 @@ npm install @convex-dev/static-hosting
 import { defineApp } from "convex/server";
 import staticHosting from "@convex-dev/static-hosting/convex.config.js";
 
-const app = defineApp();
-app.use(staticHosting, { httpPrefix: "/" });
+// Your own HTTP endpoints (convex/http.ts) are served under /api so the
+// static site can own the root.
+const app = defineApp({ httpPrefix: "/api" });
+app.use(staticHosting, { httpPrefix: "/", env: {} });
 
 export default app;
 ```
 
-`httpPrefix: "/"` serves your static site at the deployment root. If you have
-other HTTP routes in your app, you can mount the static site under a sub-path
-(see [Mounting under a sub-path](#mounting-under-a-sub-path) below).
+The static site is mounted at `/` with a catch-all route, so it would shadow
+any HTTP routes you define at the root. Passing `httpPrefix: "/api"` to
+`defineApp` moves your own `convex/http.ts` routes under `/api/...`, leaving the
+root for the static site (your frontend then calls those endpoints at
+`/api/...`).
+
+To instead host the static site itself under a sub-path, see
+[Mounting under a sub-path](#mounting-under-a-sub-path) below.
 
 ### 3. Add a deploy script
 

@@ -30,7 +30,10 @@ function createConvexConfig(): void {
     console.log(
       '   import staticHosting from "@convex-dev/static-hosting/convex.config";',
     );
-    console.log('   app.use(staticHosting, { httpPrefix: "/" });\n');
+    console.log('   app.use(staticHosting, { httpPrefix: "/" });');
+    console.log(
+      '   // and prefix your own routes: defineApp({ httpPrefix: "/api" })\n',
+    );
     return;
   }
 
@@ -39,8 +42,10 @@ function createConvexConfig(): void {
     `import { defineApp } from "convex/server";
 import staticHosting from "@convex-dev/static-hosting/convex.config";
 
-const app = defineApp();
-app.use(staticHosting, { httpPrefix: "/" });
+// Your own HTTP endpoints (convex/http.ts) are served under /api so the
+// static site can own the root.
+const app = defineApp({ httpPrefix: "/api" });
+app.use(staticHosting, { httpPrefix: "/", env: {} });
 
 export default app;
 `,
