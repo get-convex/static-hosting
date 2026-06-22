@@ -409,6 +409,12 @@ npx @convex-dev/static-hosting deploy
 npm run build && npx @convex-dev/static-hosting upload --prod
 ```
 
+### "Cannot find module convex.config"
+Make sure you've installed the package and it's listed in `package.json`:
+```bash
+npm install @convex-dev/static-hosting
+```
+
 ### Component name mismatch
 
 If you've renamed the component instance with `app.use(staticHosting, { name:
