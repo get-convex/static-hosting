@@ -292,6 +292,47 @@ app.use(staticHosting, {
 The env var accepts `"enabled"` (default) or `"disabled"`; unset keeps the
 fallback on. (Component env vars require `convex` ≥ 1.39.)
 
+## Upgrading from 0.1.x
+
+0.2.0 is a **breaking change**: HTTP serving and file storage moved into the
+component itself, so the app no longer registers routes or owns the files.
+
+1. **Update `convex/convex.config.ts`** to the form shown in
+   [Manual Setup](#convexconfigts) — the component is now named `staticHosting`
+   (was `selfHosting`) and is mounted with `app.use(staticHosting, {
+   httpPrefix: "/" })`.
+2. **Delete `convex/http.ts`** (or remove the `registerStaticRoutes` call) — the
+   component serves its own routes now.
+3. **Trim `convex/staticHosting.ts`** down to just `exposeDeploymentQuery` if
+   you use `<UpdateBanner />`; remove the `exposeUploadApi` re-exports. If you
+   don't surface deployment updates you can delete the file entirely.
+4. **Redeploy your assets** with `npx @convex-dev/static-hosting deploy`. Assets
+   uploaded under 0.1.x lived in the *app's* storage and won't resolve against
+   the component's storage.
+
+Removed from the client API: `registerStaticRoutes` and `exposeUploadApi`.
+`exposeDeploymentQuery` and `getConvexUrl` remain.
+
+### Side-by-side migration (no downtime)
+
+Because components are isolated by mount name, you can run the old and new
+versions simultaneously and cut over when you're ready:
+
+1. Keep the existing 0.1.x install serving traffic at the root.
+2. Install 0.2.x under a second mount, temporarily at a sub-path:
+
+   ```ts
+   const app = defineApp({ httpPrefix: "/api" });
+   app.use(staticHosting, { httpPrefix: "/next/", env: {} }); // new, staged here first
+   ```
+
+3. Deploy assets to the new mount and verify it at `/next/`.
+4. Flip the prefixes — move the new mount to `/` and retire the old one — then
+   remove the 0.1.x install and its `convex/http.ts`.
+
+(If you also need both package versions installed at once, alias one in
+`package.json`, e.g. `"static-hosting-legacy": "npm:@convex-dev/static-hosting@0.1.3"`.)
+
 ## Troubleshooting
 
 ### 404s on every path

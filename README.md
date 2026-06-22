@@ -242,6 +242,16 @@ app.use(staticHosting, {
 Requests for paths with an extension (e.g. `/missing.js`) always 404 when not
 found, regardless of this setting.
 
+## Upgrading from 0.1.x
+
+0.2.0 moved HTTP serving and file storage into the component itself, which is a
+**breaking change** — delete `convex/http.ts` and the upload-API re-exports,
+re-register the component as shown above, and **redeploy your assets** (assets
+uploaded under 0.1.x lived in your app's storage and won't resolve). See the
+[CHANGELOG](./CHANGELOG.md) and the [upgrade guide in
+INTEGRATION.md](./INTEGRATION.md#upgrading-from-01x) for the full steps,
+including a side-by-side migration that avoids downtime.
+
 ## How it works
 
 1. **Build** — your bundler emits `dist/`.
