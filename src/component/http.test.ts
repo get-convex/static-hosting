@@ -3,14 +3,13 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { internal } from "./_generated/api.js";
 import { initConvexTest } from "./setup.test.js";
+import { getMountPrefix } from "./http.js";
 import {
   cacheControlFor,
   getMimeType,
-  getMountPrefix,
   hasFileExtension,
   isHashedAsset,
-  isSpaFallbackEnabled,
-} from "./http.js";
+} from "./serving.js";
 
 async function storeAsset(
   t: ReturnType<typeof initConvexTest>,
@@ -133,24 +132,22 @@ describe("static file serving", () => {
     expect(await res.text()).toContain("no static files have been deployed");
   });
 
-  describe("with SPA fallback disabled", () => {
-    afterEach(() => {
-      vi.unstubAllEnvs();
+  test("extension-less misses 404 when SPA fallback is disabled", async () => {
+    const t = initConvexTest();
+    await storeAsset(
+      t,
+      "/index.html",
+      "<!doctype html>",
+      "text/html; charset=utf-8",
+    );
+    // Record the deployment with SPA fallback off (what `upload --no-spa` does).
+    await t.mutation(internal.lib.gcOldAssets, {
+      currentDeploymentId: "deploy-1",
+      spaFallback: false,
     });
 
-    test("extension-less misses 404 instead of serving index.html", async () => {
-      vi.stubEnv("STATIC_HOSTING_SPA_FALLBACK", "disabled");
-      const t = initConvexTest();
-      await storeAsset(
-        t,
-        "/index.html",
-        "<!doctype html>",
-        "text/html; charset=utf-8",
-      );
-
-      const res = await t.fetch("/dashboard", {});
-      expect(res.status).toBe(404);
-    });
+    const res = await t.fetch("/dashboard", {});
+    expect(res.status).toBe(404);
   });
 });
 
@@ -204,25 +201,6 @@ describe("serving helpers", () => {
       expect(getMountPrefix()).toBe("/app");
       vi.stubEnv("CONVEX_SITE_URL", "https://x.convex.site/app/");
       expect(getMountPrefix()).toBe("/app");
-    });
-  });
-
-  describe("isSpaFallbackEnabled", () => {
-    afterEach(() => {
-      vi.unstubAllEnvs();
-    });
-
-    test("defaults to enabled when unset", () => {
-      expect(isSpaFallbackEnabled()).toBe(true);
-    });
-
-    test('is off only for "disabled"', () => {
-      vi.stubEnv("STATIC_HOSTING_SPA_FALLBACK", "disabled");
-      expect(isSpaFallbackEnabled()).toBe(false);
-      for (const value of ["enabled", undefined]) {
-        vi.stubEnv("STATIC_HOSTING_SPA_FALLBACK", value);
-        expect(isSpaFallbackEnabled()).toBe(true);
-      }
     });
   });
 });

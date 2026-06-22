@@ -4,6 +4,7 @@ import {
   internalQuery,
   query,
 } from "./_generated/server.js";
+import { hasFileExtension } from "./serving.js";
 
 const staticAssetValidator = v.object({
   _id: v.id("staticAssets"),
@@ -20,6 +21,7 @@ const deploymentInfoValidator = v.object({
   _creationTime: v.number(),
   currentDeploymentId: v.string(),
   deployedAt: v.number(),
+  spaFallback: v.optional(v.boolean()),
 });
 
 export const getCurrentDeployment = query({
@@ -55,6 +57,33 @@ export const getByPath = internalQuery({
     return await ctx.db
       .query("staticAssets")
       .withIndex("by_path", (q) => q.eq("path", args.path))
+      .unique();
+  },
+});
+
+// Resolves the asset the HTTP handler should serve for a request path: the
+// exact match, or — when SPA fallback is enabled for the current deployment
+// and the path looks like a client-side route (no file extension) — the
+// index.html asset. Doing the fallback here keeps it to a single query.
+export const resolveAsset = internalQuery({
+  args: { path: v.string() },
+  returns: v.union(staticAssetValidator, v.null()),
+  handler: async (ctx, { path }) => {
+    const exact = await ctx.db
+      .query("staticAssets")
+      .withIndex("by_path", (q) => q.eq("path", path))
+      .unique();
+    if (exact) return exact;
+
+    if (hasFileExtension(path)) return null;
+
+    const info = await ctx.db.query("deploymentInfo").first();
+    const spaFallback = info?.spaFallback ?? true;
+    if (!spaFallback) return null;
+
+    return await ctx.db
+      .query("staticAssets")
+      .withIndex("by_path", (q) => q.eq("path", "/index.html"))
       .unique();
   },
 });
@@ -151,7 +180,11 @@ export const recordAssets = internalMutation({
 });
 
 export const gcOldAssets = internalMutation({
-  args: { currentDeploymentId: v.string() },
+  args: {
+    currentDeploymentId: v.string(),
+    // Whether to serve SPA fallback for this deployment (default true).
+    spaFallback: v.optional(v.boolean()),
+  },
   returns: v.object({
     deleted: v.number(),
     blobIds: v.array(v.string()),
@@ -172,16 +205,19 @@ export const gcOldAssets = internalMutation({
       await ctx.db.delete("staticAssets", asset._id);
     }
 
+    const spaFallback = args.spaFallback ?? true;
     const existing = await ctx.db.query("deploymentInfo").first();
     if (existing) {
       await ctx.db.patch("deploymentInfo", existing._id, {
         currentDeploymentId: args.currentDeploymentId,
         deployedAt: Date.now(),
+        spaFallback,
       });
     } else {
       await ctx.db.insert("deploymentInfo", {
         currentDeploymentId: args.currentDeploymentId,
         deployedAt: Date.now(),
+        spaFallback,
       });
     }
     return { deleted, blobIds };

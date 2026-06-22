@@ -53,6 +53,7 @@ interface ParsedArgs {
   cdn: boolean;
   cdnDeleteFunction: string;
   concurrency: number;
+  spaFallback: boolean;
   help: boolean;
 }
 
@@ -66,6 +67,7 @@ function parseArgs(args: string[]): ParsedArgs {
     cdn: false,
     cdnDeleteFunction: "",
     concurrency: 5,
+    spaFallback: true,
     help: false,
   };
 
@@ -89,6 +91,10 @@ function parseArgs(args: string[]): ParsedArgs {
         result.buildCommand = cmd;
         result.build = true;
       }
+    } else if (arg === "--no-spa") {
+      result.spaFallback = false;
+    } else if (arg === "--spa") {
+      result.spaFallback = true;
     } else if (arg === "--cdn") {
       result.cdn = true;
     } else if (arg === "--cdn-delete-function") {
@@ -116,6 +122,8 @@ Options:
                               STATIC_HOSTING_BASE_PATH set before uploading
       --build-command <cmd>   Build command to run (default: 'npm run build').
                               Implies --build.
+      --no-spa                Disable SPA fallback for this deployment (extension-less
+                              misses return 404 instead of index.html)
       --cdn                   Upload non-HTML assets to convex-fs CDN instead of Convex storage
       --cdn-delete-function <name>  App function to delete CDN blobs (e.g. staticHosting:deleteCdnBlobs)
   -j, --concurrency <n>       Number of parallel uploads (default: 5)
@@ -441,9 +449,10 @@ async function main(): Promise<void> {
 
   console.log("");
 
-  // Garbage collect old files
+  // Garbage collect old files and record this deployment's SPA config.
   const gcOutput = await convexRunAsync(componentName, "lib:gcOldAssets", {
     currentDeploymentId: deploymentId,
+    spaFallback: args.spaFallback,
   });
   const gcResult = JSON.parse(gcOutput);
   const deletedCount: number = gcResult.deleted;

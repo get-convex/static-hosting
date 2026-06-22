@@ -58,7 +58,7 @@ import staticHosting from "@convex-dev/static-hosting/convex.config.js";
 // Your own HTTP endpoints (convex/http.ts) are served under /api so the
 // static site can own the root.
 const app = defineApp({ httpPrefix: "/api" });
-app.use(staticHosting, { httpPrefix: "/", env: {} });
+app.use(staticHosting, { httpPrefix: "/" });
 
 export default app;
 ```
@@ -161,6 +161,7 @@ npx @convex-dev/static-hosting deploy [options]
   -c, --component <name>    Component instance name (default: staticHosting)
       --skip-build          Skip the build step (use existing dist)
       --skip-convex         Skip Convex backend deployment
+      --no-spa              Disable SPA fallback (extension-less misses 404)
       --cdn                 Upload non-HTML assets to convex-fs CDN
 
 npx @convex-dev/static-hosting upload [options]
@@ -168,6 +169,7 @@ npx @convex-dev/static-hosting upload [options]
   -c, --component <name>    Component instance name (default: staticHosting)
       --prod                Deploy to production deployment
   -b, --build               Run 'npm run build' with VITE_CONVEX_URL set
+      --no-spa              Disable SPA fallback (extension-less misses 404)
       --cdn                 Upload non-HTML assets to convex-fs CDN
       --cdn-delete-function App function path that deletes CDN blobs (opt-in)
   -j, --concurrency <n>     Parallel upload workers (default: 5)
@@ -273,18 +275,16 @@ Root-mounted apps don't need this — the default is `/`. For webpack use
 By default, requests for a path with no file extension that doesn't match an
 uploaded file fall back to `index.html`, so client-side routes like
 `/dashboard/settings` work on reload. For a multi-page app where unknown paths
-should be a real 404, disable the fallback by binding the component's
-`STATIC_HOSTING_SPA_FALLBACK` env var when you mount it:
+should be a real 404, deploy with `--no-spa`:
 
-```ts
-app.use(staticHosting, {
-  httpPrefix: "/",
-  env: { STATIC_HOSTING_SPA_FALLBACK: "disabled" },
-});
+```bash
+npx @convex-dev/static-hosting deploy --no-spa
 ```
 
-Requests for paths with an extension (e.g. `/missing.js`) always 404 when not
-found, regardless of this setting.
+The setting is stored with the deployment, so it travels with the code you
+ship rather than living in a separate env var. Requests for paths with an
+extension (e.g. `/missing.js`) always 404 when not found, regardless of this
+setting.
 
 ## Upgrading from 0.1.x
 

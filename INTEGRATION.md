@@ -46,9 +46,7 @@ import staticHosting from "@convex-dev/static-hosting/convex.config";
 // Serve your own HTTP endpoints (convex/http.ts) under /api so the static
 // site can own the root.
 const app = defineApp({ httpPrefix: "/api" });
-// `env` is required because the component declares (optional) env vars; leave
-// it `{}` for defaults. See "SPA routing" below to override.
-app.use(staticHosting, { httpPrefix: "/", env: {} });
+app.use(staticHosting, { httpPrefix: "/" });
 
 export default app;
 ```
@@ -172,7 +170,7 @@ import staticHosting from "@convex-dev/static-hosting/convex.config";
 import fs from "convex-fs/convex.config";
 
 const app = defineApp();
-app.use(staticHosting, { httpPrefix: "/", env: {} });
+app.use(staticHosting, { httpPrefix: "/" });
 app.use(fs);
 
 export default app;
@@ -246,6 +244,7 @@ npx @convex-dev/static-hosting deploy [options]
   -c, --component <name>    Component instance name (default: staticHosting)
       --skip-build          Skip the build step
       --skip-convex         Skip Convex backend deployment
+      --no-spa              Disable SPA fallback (extension-less misses 404)
       --cdn                 Upload non-HTML assets to convex-fs CDN
 
 npx @convex-dev/static-hosting upload [options]
@@ -253,6 +252,7 @@ npx @convex-dev/static-hosting upload [options]
   -c, --component <name>    Component instance name (default: staticHosting)
       --prod                Deploy to production deployment
   -b, --build               Run 'npm run build' with VITE_CONVEX_URL set
+      --no-spa              Disable SPA fallback (extension-less misses 404)
       --cdn                 Upload non-HTML assets to convex-fs CDN
       --cdn-delete-function App function path that deletes CDN blobs
   -j, --concurrency <n>     Parallel upload workers (default: 5)
@@ -287,18 +287,17 @@ equivalents: `publicPath` and `assetPrefix`.
 Requests for an extension-less path that doesn't match an uploaded file fall
 back to `index.html`, so client-side routes survive a reload. Paths with an
 extension (e.g. `/missing.js`) always 404 when not found. To turn the fallback
-off for a multi-page app (unknown paths become real 404s), bind the component's
-`STATIC_HOSTING_SPA_FALLBACK` env var where you mount it:
+off for a multi-page app (unknown paths become real 404s), deploy with
+`--no-spa`:
 
-```typescript
-app.use(staticHosting, {
-  httpPrefix: "/",
-  env: { STATIC_HOSTING_SPA_FALLBACK: "disabled" },
-});
+```bash
+npx @convex-dev/static-hosting deploy --no-spa
+# or: npx @convex-dev/static-hosting upload --no-spa
 ```
 
-The env var accepts `"enabled"` (default) or `"disabled"`; unset keeps the
-fallback on. (Component env vars require `convex` ≥ 1.39.)
+The flag is stored on the deployment record (the `deploymentInfo` table), so
+the serving behavior travels with the code you ship rather than living in a
+separate env var. Re-deploy without `--no-spa` or with `--spa` to turn it back on.
 
 ## Upgrading from 0.1.x
 
