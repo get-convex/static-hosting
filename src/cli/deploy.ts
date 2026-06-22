@@ -24,6 +24,7 @@ interface ParsedArgs {
   skipBuild: boolean;
   skipConvex: boolean;
   cdn: boolean;
+  spaFallback: boolean;
   buildCommand: string;
 }
 
@@ -35,6 +36,7 @@ function parseArgs(args: string[]): ParsedArgs {
     skipBuild: false,
     skipConvex: false,
     cdn: false,
+    spaFallback: true,
     buildCommand: "npm run build",
   };
 
@@ -52,6 +54,10 @@ function parseArgs(args: string[]): ParsedArgs {
       result.skipConvex = true;
     } else if (arg === "--cdn") {
       result.cdn = true;
+    } else if (arg === "--no-spa") {
+      result.spaFallback = false;
+    } else if (arg === "--spa") {
+      result.spaFallback = true;
     } else if (arg === "--build-command") {
       const cmd = args[++i];
       if (cmd) result.buildCommand = cmd;
@@ -74,6 +80,7 @@ Options:
       --skip-build            Skip the build step (use existing dist)
       --skip-convex           Skip Convex backend deployment
       --build-command <cmd>   Build command to run (default: 'npm run build')
+      --no-spa                Disable SPA fallback (extension-less misses 404)
       --cdn                   Upload non-HTML assets to convex-fs CDN
   -h, --help                  Show this help message
 
@@ -134,6 +141,7 @@ async function uploadToConvexStorage(
   distDir: string,
   componentName: string,
   useCdn: boolean,
+  spaFallback: boolean,
 ): Promise<boolean> {
   console.log("");
   console.log(
@@ -155,6 +163,9 @@ async function uploadToConvexStorage(
 
   if (useCdn) {
     uploadArgs.push("--cdn");
+  }
+  if (!spaFallback) {
+    uploadArgs.push("--no-spa");
   }
 
   const result = spawnSync("npx", uploadArgs, { stdio: "inherit" });
@@ -296,6 +307,7 @@ async function main(): Promise<void> {
     distDir,
     args.component,
     args.cdn,
+    args.spaFallback,
   );
 
   if (!staticDeploySuccess) {

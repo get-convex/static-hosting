@@ -17,5 +17,9 @@ export default defineSchema({
   deploymentInfo: defineTable({
     currentDeploymentId: v.string(),
     deployedAt: v.number(), // timestamp
+    // SPA fallback config for the current deployment. Set at upload time
+    // (`--no-spa` turns it off). Absent means enabled. Travels with the
+    // deploy so the serving behavior matches the code that was shipped.
+    spaFallback: v.optional(v.boolean()),
   }),
 });
