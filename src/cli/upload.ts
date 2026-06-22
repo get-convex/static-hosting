@@ -122,8 +122,8 @@ Options:
                               STATIC_HOSTING_BASE_PATH set before uploading
       --build-command <cmd>   Build command to run (default: 'npm run build').
                               Implies --build.
-      --no-spa                Disable SPA fallback for this deployment (extension-less
-                              misses return 404 instead of index.html)
+      --no-spa                Disable SPA fallback for this deployment (return a
+                              404 instead of falling back to /index.html)
       --cdn                   Upload non-HTML assets to convex-fs CDN instead of Convex storage
       --cdn-delete-function <name>  App function to delete CDN blobs (e.g. staticHosting:deleteCdnBlobs)
   -j, --concurrency <n>       Number of parallel uploads (default: 5)

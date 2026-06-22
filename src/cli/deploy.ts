@@ -80,7 +80,7 @@ Options:
       --skip-build            Skip the build step (use existing dist)
       --skip-convex           Skip Convex backend deployment
       --build-command <cmd>   Build command to run (default: 'npm run build')
-      --no-spa                Disable SPA fallback (extension-less misses 404)
+      --no-spa                Disable SPA fallback (404 instead of /index.html)
       --cdn                   Upload non-HTML assets to convex-fs CDN
   -h, --help                  Show this help message
 
