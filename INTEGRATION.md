@@ -244,7 +244,7 @@ npx @convex-dev/static-hosting deploy [options]
   -c, --component <name>    Component instance name (default: staticHosting)
       --skip-build          Skip the build step
       --skip-convex         Skip Convex backend deployment
-      --no-spa              Disable SPA fallback (extension-less misses 404)
+      --no-spa              Disable SPA fallback (404 instead of /index.html)
       --cdn                 Upload non-HTML assets to convex-fs CDN
 
 npx @convex-dev/static-hosting upload [options]
@@ -252,7 +252,7 @@ npx @convex-dev/static-hosting upload [options]
   -c, --component <name>    Component instance name (default: staticHosting)
       --prod                Deploy to production deployment
   -b, --build               Run 'npm run build' with VITE_CONVEX_URL set
-      --no-spa              Disable SPA fallback (extension-less misses 404)
+      --no-spa              Disable SPA fallback (404 instead of /index.html)
       --cdn                 Upload non-HTML assets to convex-fs CDN
       --cdn-delete-function App function path that deletes CDN blobs
   -j, --concurrency <n>     Parallel upload workers (default: 5)
