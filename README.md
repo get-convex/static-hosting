@@ -5,6 +5,8 @@
 A Convex component that enables hosting static React/Vite apps using Convex
 HTTP actions and file storage. No external hosting provider required!
 
+[![Share your slop with the Static Hosting Component!](https://thumbs.video-to-markdown.com/d5a10c30.jpg)](https://youtu.be/RNjTys_2OX4)
+
 ## Quick Start
 
 ### Automated Setup (Recommended)
