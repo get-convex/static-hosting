@@ -37,5 +37,17 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         } | null,
         Name
       >;
+      resolveAssetForHttp: FunctionReference<
+        "query",
+        "internal",
+        { path: string; spaFallback?: boolean },
+        {
+          blobId?: string;
+          contentType: string;
+          etag?: string;
+          storageUrl?: string;
+        } | null,
+        Name
+      >;
     };
   };

@@ -18,7 +18,9 @@ describe("component lib", () => {
     expect(typeof uploadUrl).toBe("string");
     expect(uploadUrl.length).toBeGreaterThan(0);
 
-    const urls = await t.mutation(internal.lib.generateUploadUrls, { count: 3 });
+    const urls = await t.mutation(internal.lib.generateUploadUrls, {
+      count: 3,
+    });
     expect(urls).toHaveLength(3);
     for (const u of urls) {
       expect(typeof u).toBe("string");
@@ -27,7 +29,9 @@ describe("component lib", () => {
 
   test("getByPath returns null when absent", async () => {
     const t = initConvexTest();
-    const asset = await t.query(internal.lib.getByPath, { path: "/index.html" });
+    const asset = await t.query(internal.lib.getByPath, {
+      path: "/index.html",
+    });
     expect(asset).toBeNull();
   });
 
@@ -68,6 +72,31 @@ describe("component lib", () => {
 
     const second = await t.query(internal.lib.getByPath, { path: "/test.js" });
     expect(second?.blobId).toBe("blob-456");
+  });
+
+  test("replaces a legacy or already-deleted storage reference", async () => {
+    const t = initConvexTest();
+    const storageId = await t.run(async (ctx) => {
+      return await ctx.storage.store(new Blob(["old"]));
+    });
+    await t.mutation(internal.lib.recordAsset, {
+      path: "/index.html",
+      storageId,
+      contentType: "text/html; charset=utf-8",
+      deploymentId: "deploy-old",
+    });
+    await t.run(async (ctx) => {
+      await ctx.storage.delete(storageId);
+    });
+
+    await expect(
+      t.mutation(internal.lib.recordAsset, {
+        path: "/index.html",
+        blobId: "replacement",
+        contentType: "text/html; charset=utf-8",
+        deploymentId: "deploy-new",
+      }),
+    ).resolves.toBeNull();
   });
 
   test("commitDeployment returns blobIds for old CDN assets and bumps deployment", async () => {
@@ -170,6 +199,41 @@ describe("component lib", () => {
       const asset = await t.query(internal.lib.resolveAsset, {
         path: "/dashboard",
       });
+      expect(asset).toBeNull();
+    });
+
+    test("returns a storage URL for app-owned HTTP routes", async () => {
+      const t = initConvexTest();
+      const storageId = await t.run(async (ctx) => {
+        return await ctx.storage.store(
+          new Blob(["<h1>Hello</h1>"], { type: "text/html" }),
+        );
+      });
+      await t.mutation(internal.lib.recordAsset, {
+        path: "/index.html",
+        storageId,
+        contentType: "text/html; charset=utf-8",
+        deploymentId: "deploy-1",
+      });
+
+      const asset = await t.query(api.lib.resolveAssetForHttp, {
+        path: "/index.html",
+      });
+
+      expect(asset?.storageUrl).toContain("http");
+      expect(asset?.etag).toBe(`"${storageId}"`);
+      expect(asset?.contentType).toBe("text/html; charset=utf-8");
+    });
+
+    test("allows compatibility routes to override SPA fallback", async () => {
+      const t = initConvexTest();
+      await seedIndex(t);
+
+      const asset = await t.query(api.lib.resolveAssetForHttp, {
+        path: "/dashboard",
+        spaFallback: false,
+      });
+
       expect(asset).toBeNull();
     });
   });

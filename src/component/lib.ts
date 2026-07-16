@@ -2,8 +2,11 @@ import { v } from "convex/values";
 import {
   internalMutation,
   internalQuery,
+  type MutationCtx,
   query,
+  type QueryCtx,
 } from "./_generated/server.js";
+import type { Id } from "./_generated/dataModel.js";
 import { hasFileExtension } from "./serving.js";
 
 const staticAssetValidator = v.object({
@@ -24,11 +27,86 @@ const deploymentInfoValidator = v.object({
   spaFallback: v.optional(v.boolean()),
 });
 
+const httpAssetValidator = v.object({
+  storageUrl: v.optional(v.string()),
+  blobId: v.optional(v.string()),
+  contentType: v.string(),
+  etag: v.optional(v.string()),
+});
+
+async function resolveAssetDocument(
+  ctx: QueryCtx,
+  path: string,
+  spaFallbackOverride?: boolean,
+) {
+  const exact = await ctx.db
+    .query("staticAssets")
+    .withIndex("by_path", (q) => q.eq("path", path))
+    .unique();
+  if (exact) return exact;
+
+  if (hasFileExtension(path)) return null;
+
+  const info = await ctx.db.query("deploymentInfo").first();
+  const spaFallback = spaFallbackOverride ?? info?.spaFallback ?? true;
+  if (!spaFallback) return null;
+
+  return await ctx.db
+    .query("staticAssets")
+    .withIndex("by_path", (q) => q.eq("path", "/index.html"))
+    .unique();
+}
+
+async function deleteStorageFile(ctx: MutationCtx, storageId: Id<"_storage">) {
+  try {
+    await ctx.storage.delete(storageId);
+    return true;
+  } catch (error) {
+    // 0.1.x stored app-owned storage IDs in the component's asset table.
+    // They are intentionally unreadable from component storage during the
+    // first 0.2.x upload, so treat them like already-deleted files.
+    if (
+      error instanceof Error &&
+      (error.message.includes("not found") ||
+        error.message === "Delete on non-existent doc")
+    ) {
+      return false;
+    }
+    throw error;
+  }
+}
+
 export const getCurrentDeployment = query({
   args: {},
   returns: v.union(deploymentInfoValidator, v.null()),
   handler: async (ctx) => {
     return await ctx.db.query("deploymentInfo").first();
+  },
+});
+
+// Narrow serving API used by the app-owned `registerStaticRoutes` compatibility
+// mode. The app can resolve a public asset, but all storage and deployment
+// management stays encapsulated in the component.
+export const resolveAssetForHttp = query({
+  args: {
+    path: v.string(),
+    spaFallback: v.optional(v.boolean()),
+  },
+  returns: v.union(httpAssetValidator, v.null()),
+  handler: async (ctx, { path, spaFallback }) => {
+    const asset = await resolveAssetDocument(ctx, path, spaFallback);
+    if (!asset) return null;
+
+    const storageUrl = asset.storageId
+      ? await ctx.storage.getUrl(asset.storageId)
+      : null;
+
+    return {
+      ...(storageUrl ? { storageUrl } : {}),
+      ...(asset.blobId ? { blobId: asset.blobId } : {}),
+      contentType: asset.contentType,
+      ...(asset.storageId ? { etag: `"${asset.storageId}"` } : {}),
+    };
   },
 });
 
@@ -69,22 +147,7 @@ export const resolveAsset = internalQuery({
   args: { path: v.string() },
   returns: v.union(staticAssetValidator, v.null()),
   handler: async (ctx, { path }) => {
-    const exact = await ctx.db
-      .query("staticAssets")
-      .withIndex("by_path", (q) => q.eq("path", path))
-      .unique();
-    if (exact) return exact;
-
-    if (hasFileExtension(path)) return null;
-
-    const info = await ctx.db.query("deploymentInfo").first();
-    const spaFallback = info?.spaFallback ?? true;
-    if (!spaFallback) return null;
-
-    return await ctx.db
-      .query("staticAssets")
-      .withIndex("by_path", (q) => q.eq("path", "/index.html"))
-      .unique();
+    return await resolveAssetDocument(ctx, path);
   },
 });
 
@@ -137,7 +200,7 @@ export const recordAsset = internalMutation({
       .unique();
     if (existing) {
       if (existing.storageId) {
-        await ctx.storage.delete(existing.storageId);
+        await deleteStorageFile(ctx, existing.storageId);
       }
       await ctx.db.delete("staticAssets", existing._id);
     }
@@ -163,7 +226,7 @@ export const recordAssets = internalMutation({
         .unique();
       if (existing) {
         if (existing.storageId) {
-          await ctx.storage.delete(existing.storageId);
+          await deleteStorageFile(ctx, existing.storageId);
         }
         await ctx.db.delete("staticAssets", existing._id);
       }
@@ -200,8 +263,9 @@ export const commitDeployment = internalMutation({
     for (const asset of oldAssets) {
       if (asset.deploymentId === args.currentDeploymentId) continue;
       if (asset.storageId) {
-        await ctx.storage.delete(asset.storageId);
-        deleted++;
+        if (await deleteStorageFile(ctx, asset.storageId)) {
+          deleted++;
+        }
       }
       if (asset.blobId) {
         blobIds.push(asset.blobId);

@@ -20,7 +20,7 @@
     "static-hosting": "dist/cli/index.js"
   },
   "scripts": {
-    "postinstall": "echo '\\n📦 @convex-dev/static-hosting installed!\\n\\n   🚀 Quick Setup (Interactive):\\n   npx @convex-dev/static-hosting setup\\n\\n   🤖 For LLMs: See INTEGRATION.md for complete integration instructions\\n   📖 Manual Setup: npx @convex-dev/static-hosting init\\n'",
+    "postinstall": "echo '\\n📦 @convex-dev/static-hosting installed!\\n\\n   🚀 Quick Setup:\\n   npx @convex-dev/static-hosting setup\\n\\n   🤖 For LLMs: See INTEGRATION.md for complete integration instructions\\n   📖 Manual Setup: npx @convex-dev/static-hosting init\\n'",
     "dev": "run-p -r 'dev:*'",
     "dev:backend": "convex dev --typecheck-components",
     "dev:frontend": "cd example && vite --clearScreen false",
@@ -47,7 +47,9 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "CHANGELOG.md",
+    "INTEGRATION.md"
   ],
   "exports": {
     "./package.json": "./package.json",

@@ -1,83 +1,12 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server.js";
 import { internal } from "./_generated/api.js";
-import { cacheControlFor, getMimeType, isHtmlContentType } from "./serving.js";
-
-function getSetupHtml(): string {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Convex Static Hosting</title>
-  <style>
-    * { box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      max-width: 640px;
-      margin: 0 auto;
-      padding: 40px 20px;
-      background: #fafafa;
-      color: #333;
-      line-height: 1.6;
-    }
-    h1 { color: #111; margin-bottom: 8px; }
-    .subtitle { color: #666; margin-bottom: 32px; }
-    code {
-      background: #e8e8e8;
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-size: 14px;
-    }
-    pre {
-      background: #1a1a1a;
-      color: #f0f0f0;
-      padding: 16px;
-      border-radius: 8px;
-      overflow-x: auto;
-      font-size: 14px;
-    }
-    .step { margin-bottom: 24px; }
-    .step-num {
-      display: inline-block;
-      background: #333;
-      color: white;
-      width: 24px;
-      height: 24px;
-      border-radius: 50%;
-      text-align: center;
-      font-size: 14px;
-      line-height: 24px;
-      margin-right: 8px;
-    }
-    a { color: #0070f3; }
-  </style>
-</head>
-<body>
-  <h1>Almost there!</h1>
-  <p class="subtitle">Your Convex backend is running, but no static files have been deployed yet.</p>
-
-  <div class="step">
-    <span class="step-num">1</span>
-    <strong>Build your frontend</strong>
-    <pre>npm run build</pre>
-  </div>
-
-  <div class="step">
-    <span class="step-num">2</span>
-    <strong>Deploy your static files</strong>
-    <pre>npx @convex-dev/static-hosting deploy</pre>
-  </div>
-
-  <p>Or deploy everything in one command:</p>
-  <pre>npm run deploy</pre>
-
-  <p style="margin-top: 32px; color: #666; font-size: 14px;">
-    Learn more at <a href="https://github.com/get-convex/static-hosting">github.com/get-convex/static-hosting</a>
-  </p>
-</body>
-</html>`;
-}
+import {
+  cacheControlFor,
+  getMimeType,
+  getSetupHtml,
+  isHtmlContentType,
+} from "./serving.js";
 
 // CONVEX_SITE_URL reflects the component's mount point (including any httpPrefix).
 // We use it to strip the prefix from incoming request paths so lookups in

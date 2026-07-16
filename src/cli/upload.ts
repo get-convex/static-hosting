@@ -124,8 +124,8 @@ Options:
                               Implies --build.
       --no-spa                Disable SPA fallback for this deployment (return a
                               404 instead of falling back to /index.html)
-      --cdn                   Upload non-HTML assets to convex-fs CDN instead of Convex storage
-      --cdn-delete-function <name>  App function to delete CDN blobs (e.g. staticHosting:deleteCdnBlobs)
+      --cdn                   Use the legacy convex-fs integration
+      --cdn-delete-function <name>  Legacy app function that deletes CDN blobs
   -j, --concurrency <n>       Number of parallel uploads (default: 5)
   -h, --help                  Show this help message
 
@@ -135,7 +135,7 @@ Examples:
   npx @convex-dev/static-hosting upload --dist ./build --prod
   npx @convex-dev/static-hosting upload --build --prod
 
-  # Upload with CDN (non-HTML files served from CDN)
+  # Upload through an existing legacy convex-fs integration
   npx @convex-dev/static-hosting upload --cdn --prod
 `);
 }

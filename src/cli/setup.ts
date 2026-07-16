@@ -17,29 +17,49 @@ function skip(msg: string): void {
   console.log(`· ${msg}`);
 }
 
-function createConvexConfig(): void {
+function findHttpFile(): string | null {
+  for (const name of ["http.ts", "http.js"]) {
+    const path = join(process.cwd(), "convex", name);
+    if (existsSync(path)) return path;
+  }
+  return null;
+}
+
+function createConvexConfig(): boolean {
   const configPath = join(process.cwd(), "convex", "convex.config.ts");
+  const httpPath = findHttpFile();
 
   if (existsSync(configPath)) {
     const existing = readFileSync(configPath, "utf-8");
     if (existing.includes("@convex-dev/static-hosting")) {
       skip("convex/convex.config.ts (already configured)");
-      return;
+      return false;
     }
     console.log("\n⚠️  convex/convex.config.ts exists. Add manually:");
     console.log(
       '   import staticHosting from "@convex-dev/static-hosting/convex.config";',
     );
-    console.log('   app.use(staticHosting, { httpPrefix: "/" });');
-    console.log(
-      '   // and prefix your own routes: defineApp({ httpPrefix: "/api" })\n',
-    );
-    return;
+    if (httpPath) {
+      console.log(
+        "   app.use(staticHosting); // keep app HTTP routes at root\n",
+      );
+      return true;
+    }
+    console.log('   app.use(staticHosting, { httpPrefix: "/" });\n');
+    return false;
   }
 
-  writeFileSync(
-    configPath,
-    `import { defineApp } from "convex/server";
+  const config = httpPath
+    ? `import { defineApp } from "convex/server";
+import staticHosting from "@convex-dev/static-hosting/convex.config";
+
+// Keep existing app HTTP routes at their current root URLs.
+const app = defineApp();
+app.use(staticHosting);
+
+export default app;
+`
+    : `import { defineApp } from "convex/server";
 import staticHosting from "@convex-dev/static-hosting/convex.config";
 
 // Your own HTTP endpoints (convex/http.ts) are served under /api so the
@@ -48,9 +68,11 @@ const app = defineApp({ httpPrefix: "/api" });
 app.use(staticHosting, { httpPrefix: "/" });
 
 export default app;
-`,
-  );
+`;
+
+  writeFileSync(configPath, config);
   success("Created convex/convex.config.ts");
+  return httpPath !== null;
 }
 
 function updatePackageJson(): void {
@@ -81,10 +103,20 @@ function main(): void {
     success("Created convex/ directory");
   }
 
-  createConvexConfig();
+  const needsStaticRoutes = createConvexConfig();
   updatePackageJson();
 
   console.log("\n✨ Setup complete!\n");
+  if (needsStaticRoutes) {
+    console.log(
+      "Keep existing HTTP routes at the root by adding this to convex/http.ts:\n",
+    );
+    console.log(
+      '   import { registerStaticRoutes } from "@convex-dev/static-hosting";',
+    );
+    console.log('   import { components } from "./_generated/api";');
+    console.log("   registerStaticRoutes(http, components.staticHosting);\n");
+  }
   console.log("Next steps:\n");
   console.log("  1. npx convex dev          # Generate types");
   console.log("  2. npm run deploy          # Build and deploy\n");

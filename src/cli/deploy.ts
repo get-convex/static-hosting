@@ -86,7 +86,7 @@ Options:
       --skip-convex           Skip Convex backend deployment
       --build-command <cmd>   Build command to run (default: 'npm run build')
       --no-spa                Disable SPA fallback (404 instead of /index.html)
-      --cdn                   Upload non-HTML assets to convex-fs CDN
+      --cdn                   Use the legacy convex-fs integration
   -h, --help                  Show this help message
 
 Deployment Flow:
