@@ -122,6 +122,7 @@ export declare function exposeDeploymentQuery(component: ComponentApi): {
         _id: string;
         currentDeploymentId: string;
         deployedAt: number;
+        spaFallback?: boolean;
     } | null>>;
 };
 /**

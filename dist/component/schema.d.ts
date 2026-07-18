@@ -16,12 +16,14 @@ declare const _default: import("convex/server").SchemaDefinition<{
         by_deploymentId: ["deploymentId", "_creationTime"];
     }, {}, {}>;
     deploymentInfo: import("convex/server").TableDefinition<import("convex/values").VObject<{
+        spaFallback?: boolean | undefined;
         currentDeploymentId: string;
         deployedAt: number;
     }, {
         currentDeploymentId: import("convex/values").VString<string, "required">;
         deployedAt: import("convex/values").VFloat64<number, "required">;
-    }, "required", "currentDeploymentId" | "deployedAt">, {}, {}, {}>;
+        spaFallback: import("convex/values").VBoolean<boolean | undefined, "optional">;
+    }, "required", "currentDeploymentId" | "spaFallback" | "deployedAt">, {}, {}, {}>;
 }, true>;
 export default _default;
 //# sourceMappingURL=schema.d.ts.map

@@ -43,6 +43,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             _id: string;
             currentDeploymentId: string;
             deployedAt: number;
+            spaFallback?: boolean;
         } | null, Name>;
         listAssets: FunctionReference<"query", "internal", {
             limit?: number;

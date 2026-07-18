@@ -166,6 +166,10 @@ const deploymentInfoValidator = v.object({
     _creationTime: v.number(),
     currentDeploymentId: v.string(),
     deployedAt: v.number(),
+    // Forward-compat only: written by 0.2.x, ignored by 0.1.x. Allowed here so a
+    // row written by 0.2.x still validates after a rollback to 0.1.x. See
+    // CHANGELOG 0.1.5.
+    spaFallback: v.optional(v.boolean()),
 });
 /**
  * Get the current deployment info.

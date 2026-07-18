@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.5
+
+- Forward-compatibility for 0.2.x rollbacks. The `deploymentInfo` schema and
+  the `getCurrentDeployment` return validator now allow an optional
+  `spaFallback` boolean. 0.1.5 ignores the field, but allowing it means a
+  deployment upgraded to 0.2.x and later rolled back to 0.1.x keeps
+  validating (0.2.x writes `spaFallback` when you deploy). No behavior change
+  for 0.1.x users; upgrade to 0.1.5 before trying 0.2.x if you want a clean
+  rollback path.
+
 ## 0.1.4
 
 - Added support for Windows

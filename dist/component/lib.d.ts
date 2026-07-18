@@ -75,6 +75,7 @@ export declare const deleteAllAssets: import("convex/server").RegisteredMutation
 export declare const getCurrentDeployment: import("convex/server").RegisteredQuery<"public", {}, Promise<{
     _id: import("convex/values").GenericId<"deploymentInfo">;
     _creationTime: number;
+    spaFallback?: boolean | undefined;
     currentDeploymentId: string;
     deployedAt: number;
 } | null>>;
