@@ -170,9 +170,12 @@ describe("serving helpers", () => {
 
   test("isHashedAsset detects bundler content hashes", () => {
     expect(isHashedAsset("/assets/index-lj_vq_aF.js")).toBe(true);
+    expect(isHashedAsset("/assets/index-D3LP-ukt.js")).toBe(true);
     expect(isHashedAsset("/assets/style-B71cUw87.css")).toBe(true);
+    expect(isHashedAsset("/assets/inter-B71cUw87.woff2")).toBe(true);
     expect(isHashedAsset("/index.html")).toBe(false);
     expect(isHashedAsset("/logo.svg")).toBe(false);
+    expect(isHashedAsset("/privacy-policy.html")).toBe(false);
   });
 
   test("cacheControlFor is immutable only for hashed assets", () => {
@@ -180,6 +183,9 @@ describe("serving helpers", () => {
       "public, max-age=31536000, immutable",
     );
     expect(cacheControlFor("/index.html")).toBe(
+      "public, max-age=0, must-revalidate",
+    );
+    expect(cacheControlFor("/page-B71cUw87.html")).toBe(
       "public, max-age=0, must-revalidate",
     );
   });

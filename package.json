@@ -29,7 +29,7 @@
     "deploy:static": "node dist/cli/index.js upload --dist ./example/dist --component staticHosting --build --build-command 'npm run build:example'",
     "dev:build": "chokidar 'tsconfig*.json' 'src/**/*.ts' -i '**/*.test.ts' -c 'npm run build:codegen' --initial",
     "predev": "path-exists .env.local dist || (npm run build && convex dev --once)",
-    "build": "tsc --project ./tsconfig.build.json",
+    "build": "tsc --build ./tsconfig.build.json --force",
     "build:codegen": "npx convex codegen --component-dir ./src/component && npm run build",
     "build:clean": "rm -rf dist *.tsbuildinfo && npm run build:codegen",
     "typecheck": "tsc --noEmit && tsc -p example && tsc -p example/convex",

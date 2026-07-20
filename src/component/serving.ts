@@ -110,9 +110,13 @@ export function hasFileExtension(path: string): boolean {
   return lastSegment.includes(".") && !lastSegment.startsWith(".");
 }
 
-// Vite hashed asset suffix: e.g. `index-lj_vq_aF.js`, `style-B71cUw87.css`
+// Bundler content-hash suffix: e.g. `index-lj_vq_aF.js`,
+// `index-D3LP-ukt.js`, or `style-B71cUw87.css`. Requiring at least one
+// non-letter avoids treating ordinary names such as `privacy-policy.html` as
+// content-addressed assets.
 export function isHashedAsset(path: string): boolean {
-  return /[-.][\dA-Za-z_]{6,12}\.[a-z]+$/.test(path);
+  const match = path.match(/[-.]([\dA-Za-z_-]{6,32})\.[A-Za-z\d]+$/);
+  return match !== null && /[\d_-]/.test(match[1]);
 }
 
 export function isHtmlContentType(contentType: string): boolean {
@@ -120,7 +124,7 @@ export function isHtmlContentType(contentType: string): boolean {
 }
 
 export function cacheControlFor(path: string): string {
-  return isHashedAsset(path)
+  return !path.toLowerCase().endsWith(".html") && isHashedAsset(path)
     ? "public, max-age=31536000, immutable"
     : "public, max-age=0, must-revalidate";
 }

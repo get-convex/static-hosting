@@ -321,7 +321,7 @@ redeploy its assets once.
    the file.
 3. Choose a serving mode:
    - **Component-owned root:** use the config from
-     [Manual Setup](#convexconfigts), remove `registerStaticRoutes`, and delete
+     [Manual Setup](#manual-setup), remove `registerStaticRoutes`, and delete
      `convex/http.ts` if it is empty.
    - **Keep existing root routes:** leave `defineApp()` without an app prefix,
      install the component without `httpPrefix`, and keep the existing
@@ -383,18 +383,18 @@ alias**:
    ```
 
 4. Build for the **final** base path (`/`, the default) and upload that to the
-   new component **without** `--build` — so the CLI uploads your `/`-based dist
-   as-is instead of rebuilding it for `/next/`:
+   new component. For Vite, keep the CLI-managed production `VITE_CONVEX_URL`
+   but override Vite's base path for this one build:
 
    ```bash
-   npm run build                                # base "/", the eventual mount
-   npx @convex-dev/static-hosting upload --prod # uploads dist as-is, no rebuild
+   npx @convex-dev/static-hosting upload --build --prod \
+     --build-command "npm run build -- --base=/"
    ```
 
-   > Don't use `deploy` or `upload --build` here: those set
-   > `STATIC_HOSTING_BASE_PATH` from the _current_ mount (`/next/`), which is
-   > the opposite of what you want. You're deliberately uploading `/`-based
-   > assets.
+   The CLI still supplies the production backend URL. The explicit Vite
+   `--base=/` only overrides `STATIC_HOSTING_BASE_PATH` from the current staged
+   mount (`/next/`). If your bundler is not Vite, use its equivalent base-path
+   override while preserving the CLI-provided `VITE_CONVEX_URL`.
 
    Because the assets reference the absolute root (`/assets/…`), the app won't
    be fully clickable at `/next/` — that root is still owned by the old version.

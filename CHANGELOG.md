@@ -35,6 +35,9 @@ upgrading.**
   (`deploy` or `upload`) to make extension-less misses return 404 instead of
   `index.html`. The setting is stored on the deployment record, so it travels
   with the code you ship.
+- Hashed-asset caching recognizes Vite's base64url hashes (including `-`) and
+  numeric extensions such as `.woff2`. HTML always uses revalidation, even if
+  its filename looks content-hashed.
 - The `cdnBaseUrl` override remains available in `registerStaticRoutes`
   compatibility mode. Component-owned HTTP routes redirect CDN blobs to the
   deployment's own `{origin}/fs/blobs`.
