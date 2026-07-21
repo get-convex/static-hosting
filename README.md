@@ -12,10 +12,10 @@ alongside your backend.
 - 🚀 **One-command deploy:** build, push backend, and upload static files in a
   single step.
 - 🔄 **SPA routing:** paths without an extension fall back to `index.html`.
-- ⚡ **Smart caching:** hashed assets get long-term immutable caching; HTML uses
-  ETag revalidation so updates land instantly.
-- 🔔 **Live reload notifications:** connected clients can subscribe to a query
-  that fires when a new version ships, with a drop-in `<UpdateBanner />`.
+- ⚡ **Smart caching:** static files are cached for speed, with safe updates when
+  a new version is deployed.
+- 🔔 **Deployment update notifications:** show connected users a prompt when a
+  new version is ready.
 - 🔒 **Authenticated uploads:** uploads go through the Convex CLI's
   authenticated session; there's no public upload endpoint.
 - 🧹 **Automatic cleanup:** files from previous 0.2.x deployments are garbage
@@ -30,23 +30,6 @@ https://github.com/user-attachments/assets/5eaf781f-87da-4292-9f96-38070c86cd39
 > before it changes anything. The guide covers the storage-breaking re-upload,
 > preserving auth and webhook URLs, historical v1 blob auditing, deployment
 > sequencing, and verification.
-
-You can give an agent this prompt:
-
-```text
-Upgrade this app from @convex-dev/static-hosting 0.1.x to 0.2.x. Before editing,
-read and follow:
-https://github.com/get-convex/static-hosting/blob/main/MIGRATION.md
-
-Inventory the routes in convex/http.ts and preserve their current URLs unless I
-explicitly approve moving them. Confirm Convex is at least 1.37.0. Before the
-first 0.2.x upload, capture the current 0.1.x asset manifest and audit app
-storage for older v1 orphans that the manifest may not list. Do not delete any
-old blob until I approve the exact IDs after the rollback window. Do not edit
-convex/_generated files by hand. Test on a development deployment, re-upload
-every static asset, and verify the existing auth routes and sessions where
-applicable, SPA fallback, 404s, and cache headers before production.
-```
 
 ```bash
 npm install convex@^1.37.0 @convex-dev/static-hosting
@@ -208,7 +191,10 @@ Your app is live at `https://<deployment>.convex.site`.
 Use your normal frontend dev server during development:
 
 ```bash
+# Terminal 1
 npx convex dev
+
+# Terminal 2
 npm run dev
 ```
 
@@ -227,7 +213,7 @@ npx @convex-dev/static-hosting upload --build
 Then use `deploy` for production. This split keeps the dev loop fast while still
 testing the real HTTP, caching, base-path, and SPA behavior before shipping.
 
-### CLI options
+## CLI options
 
 ```bash
 npx @convex-dev/static-hosting deploy [options]
@@ -254,15 +240,10 @@ npx @convex-dev/static-hosting upload [options]
   -j, --concurrency <n>     Parallel upload workers (default: 5)
 ```
 
-The CLI stages the complete asset manifest in small, portable command-line
-chunks. One final Convex mutation atomically publishes the manifest and
-deployment settings, so new HTML cannot become visible before its referenced
-assets. Old storage is then removed in bounded cleanup transactions. A failed
-publish leaves the previous deployment live, and cleanup never deletes files
-referenced by it. Deployments are limited to 1,800 files and 2 MiB of serialized
-manifest metadata so the atomic switch remains below Convex transaction limits.
-Each later upload also removes component files and staging records abandoned by
-an interrupted upload once they are 24 hours old.
+Each upload is published atomically, so visitors never see a page that refers to
+assets that are not available yet. Failed uploads leave the previous deployment
+live, and old files are cleaned up safely. See [INTEGRATION.md](./INTEGRATION.md)
+for upload limits and lifecycle details.
 
 Convex HTTP routes currently support GET but not HEAD. Configure uptime checks
 to make a lightweight GET request rather than a HEAD request.
@@ -288,7 +269,7 @@ called via:
 This means unauthorized users **cannot** upload files to your site, even if they
 know your Convex URL.
 
-## Live reload on deploy (optional)
+## Reload prompt after deploy (optional)
 
 If you want a banner that prompts users to reload when a new deployment ships,
 expose the deployment query in your app and drop in `<UpdateBanner />`:
