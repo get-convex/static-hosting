@@ -78,6 +78,73 @@ describe("registerStaticRoutes", () => {
     expect(await response.text()).toBe("<h1>Hello</h1>");
   });
 
+  test("returns a non-cacheable 503 setup page before the first upload", async () => {
+    const handler = staticHandler();
+    const runQuery = vi.fn().mockResolvedValue(null);
+
+    const response = await invokeHandler(
+      handler,
+      runQuery,
+      new Request("https://app.convex.site/"),
+    );
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(response.headers.get("Retry-After")).toBe("5");
+    expect(await response.text()).toContain(
+      "no static files have been deployed",
+    );
+  });
+
+  test("returns the setup page at the exact compatibility prefix", async () => {
+    const http = httpRouter();
+    registerStaticRoutes(http, components.staticHosting, {
+      pathPrefix: "/app/",
+    });
+    const handler = http.lookup("/app", "GET")?.[0];
+    if (!handler) throw new Error("No exact prefixed route registered");
+
+    const response = await invokeHandler(
+      handler,
+      vi.fn().mockResolvedValue(null),
+      new Request("https://app.convex.site/app"),
+    );
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(response.headers.get("Retry-After")).toBe("5");
+  });
+
+  test("decodes percent-encoded paths before resolving assets", async () => {
+    const handler = staticHandler();
+    const runQuery = vi.fn().mockResolvedValue(null);
+
+    await invokeHandler(
+      handler,
+      runQuery,
+      new Request("https://app.convex.site/docs/hello%20world.txt"),
+    );
+
+    expect(runQuery).toHaveBeenCalledWith(
+      components.staticHosting.lib.resolveAssetForHttp,
+      { path: "/docs/hello world.txt" },
+    );
+  });
+
+  test("rejects malformed percent encoding before querying the component", async () => {
+    const handler = staticHandler();
+    const runQuery = vi.fn();
+
+    const response = await invokeHandler(
+      handler,
+      runQuery,
+      new Request("https://app.convex.site/bad%ZZpath"),
+    );
+
+    expect(response.status).toBe(400);
+    expect(runQuery).not.toHaveBeenCalled();
+  });
+
   test("strips a path prefix and forwards the SPA override", async () => {
     const http = httpRouter();
     registerStaticRoutes(http, components.staticHosting, {
@@ -101,7 +168,7 @@ describe("registerStaticRoutes", () => {
     expect(response.status).toBe(404);
   });
 
-  test("returns 304 without fetching storage when the ETag matches", async () => {
+  test("returns 304 for a weak ETag in a validator list", async () => {
     const handler = staticHandler();
     const runQuery = vi.fn().mockResolvedValue({
       storageUrl: "https://storage.example/app.js",
@@ -115,7 +182,9 @@ describe("registerStaticRoutes", () => {
       handler,
       runQuery,
       new Request("https://app.convex.site/app.js", {
-        headers: { "If-None-Match": '"storage-id"' },
+        headers: {
+          "If-None-Match": '"not-current", W/"storage-id"',
+        },
       }),
     );
 

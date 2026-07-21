@@ -9,6 +9,12 @@
  *   --dist <path>            Path to dist directory (default: ./dist)
  *   --component <name>       Component instance name (default: staticHosting)
  *   --prod                   Deploy to production deployment
+ *   --build                  Run the frontend build before uploading
+ *   --build-command <cmd>    Override the frontend build command
+ *   --spa / --no-spa         Enable or disable SPA fallback
+ *   --cdn                    Use the legacy convex-fs integration
+ *   --cdn-delete-function    App function that deletes old CDN blobs
+ *   --concurrency <n>        Parallel upload workers (default: 5)
  *   --help                   Show help
  */
 
@@ -124,6 +130,7 @@ Options:
                               Implies --build.
       --no-spa                Disable SPA fallback for this deployment (return a
                               404 instead of falling back to /index.html)
+      --spa                   Enable SPA fallback for this deployment (default)
       --cdn                   Use the legacy convex-fs integration
       --cdn-delete-function <name>  Legacy app function that deletes CDN blobs
   -j, --concurrency <n>       Number of parallel uploads (default: 5)
@@ -142,6 +149,7 @@ Examples:
 
 // Global flag for production mode
 let useProd = true;
+const MAX_CONVEX_ARGUMENT_BYTES = 750 * 1024;
 
 interface DeploymentUrls {
   /** CONVEX_SITE_URL — includes the component's mount prefix. */
@@ -172,15 +180,117 @@ function convexRunAsync(
   functionPath: string,
   args: Record<string, unknown> = {},
 ): Promise<string> {
+  const serializedArgs = JSON.stringify(args);
+  const argumentBytes = Buffer.byteLength(serializedArgs);
+  if (argumentBytes > MAX_CONVEX_ARGUMENT_BYTES) {
+    throw new Error(
+      "The static asset manifest is " +
+        argumentBytes +
+        " bytes, which is too large to pass safely through the Convex CLI. " +
+        "Reduce the number or length of asset paths.",
+    );
+  }
+
   return runConvexAsync([
     "run",
     ...(componentName ? ["--component", componentName] : []),
     functionPath,
-    JSON.stringify(args),
+    serializedArgs,
     "--typecheck=disable",
     "--codegen=disable",
     ...(useProd ? ["--prod"] : []),
   ]);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+interface UploadedLocations {
+  storageIds: string[];
+  blobIds: string[];
+}
+
+interface PublishResult {
+  deleted: number;
+  blobIds: string[];
+}
+
+async function forEachWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+  let nextIndex = 0;
+  let firstError: unknown;
+
+  async function runWorker() {
+    while (firstError === undefined) {
+      const index = nextIndex++;
+      if (index >= items.length) return;
+      try {
+        await worker(items[index], index);
+      } catch (error) {
+        firstError ??= error;
+      }
+    }
+  }
+
+  const workerCount = Math.min(concurrency, items.length);
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+  if (firstError !== undefined) throw firstError;
+}
+
+async function cleanUpFailedUpload(
+  componentName: string,
+  uploaded: UploadedLocations,
+  cdnDeleteFunction: string,
+) {
+  if (uploaded.storageIds.length > 0) {
+    try {
+      let deleted = 0;
+      // Keep cleanup arguments comfortably below the CLI and mutation limits.
+      for (
+        let offset = 0;
+        offset < uploaded.storageIds.length;
+        offset += 1000
+      ) {
+        const output = await convexRunAsync(
+          componentName,
+          "lib:deleteUploadedFiles",
+          { storageIds: uploaded.storageIds.slice(offset, offset + 1000) },
+        );
+        const result = JSON.parse(output) as { deleted?: unknown };
+        if (typeof result.deleted === "number") deleted += result.deleted;
+      }
+      console.log(`Removed ${deleted} file(s) from the failed upload.`);
+    } catch (cleanupError) {
+      console.warn(
+        "Warning: Could not remove component files from the failed upload: " +
+          errorMessage(cleanupError),
+      );
+    }
+  }
+
+  if (uploaded.blobIds.length > 0 && cdnDeleteFunction) {
+    try {
+      await convexRunAsync(undefined, cdnDeleteFunction, {
+        blobIds: uploaded.blobIds,
+      });
+      console.log(
+        `Removed ${uploaded.blobIds.length} CDN blob(s) from the failed upload.`,
+      );
+    } catch (cleanupError) {
+      console.warn(
+        "Warning: Could not remove CDN blobs from the failed upload: " +
+          errorMessage(cleanupError),
+      );
+    }
+  } else if (uploaded.blobIds.length > 0) {
+    console.warn(
+      `${uploaded.blobIds.length} CDN blob(s) from the failed upload remain. Pass --cdn-delete-function to enable cleanup.`,
+    );
+  }
 }
 
 async function uploadWithConcurrency(
@@ -190,8 +300,11 @@ async function uploadWithConcurrency(
   useCdn: boolean,
   cdnUploadBase: string | null,
   concurrency: number,
-): Promise<void> {
+  spaFallback: boolean,
+  cdnDeleteFunction: string,
+): Promise<PublishResult> {
   const total = files.length;
+  const uploaded: UploadedLocations = { storageIds: [], blobIds: [] };
 
   // Separate CDN and storage files
   const cdnFiles: typeof files = [];
@@ -215,62 +328,70 @@ async function uploadWithConcurrency(
     deploymentId: string;
   }> = [];
 
-  if (storageFiles.length > 0) {
-    // Step 1: Generate all upload URLs in one batch call
-    console.log(`  Generating ${storageFiles.length} upload URLs...`);
-    const urlsOutput = await convexRunAsync(
-      componentName,
-      "lib:generateUploadUrls",
-      { count: storageFiles.length },
-    );
-    const uploadUrls: string[] = JSON.parse(urlsOutput);
+  try {
+    if (storageFiles.length > 0) {
+      // Step 1: Generate all upload URLs in one batch call
+      console.log(`  Generating ${storageFiles.length} upload URLs...`);
+      const urlsOutput = await convexRunAsync(
+        componentName,
+        "lib:generateUploadUrls",
+        { count: storageFiles.length },
+      );
+      const uploadUrls: string[] = JSON.parse(urlsOutput);
 
-    // Step 2: Upload all files in parallel via fetch
-    const storageIds: string[] = new Array(storageFiles.length);
-    const pending = new Set<Promise<void>>();
+      // Step 2: Upload all files in parallel via fetch
+      const storageIds: string[] = new Array(storageFiles.length);
+      await forEachWithConcurrency(
+        storageFiles,
+        concurrency,
+        async (file, idx) => {
+          const content = readFileSync(file.localPath);
+          const response = await fetch(uploadUrls[idx], {
+            method: "POST",
+            headers: { "Content-Type": file.contentType },
+            body: content,
+          });
+          if (!response.ok) {
+            throw new Error(
+              "Storage upload failed for " +
+                file.path +
+                ": " +
+                response.status +
+                " " +
+                response.statusText,
+            );
+          }
+          const { storageId } = (await response.json()) as {
+            storageId?: unknown;
+          };
+          if (typeof storageId !== "string") {
+            throw new Error(
+              "Storage upload returned no storageId for " + file.path,
+            );
+          }
+          storageIds[idx] = storageId;
+          uploaded.storageIds.push(storageId);
+          completed++;
+          const isHtml = file.contentType.startsWith("text/html");
+          console.log(
+            `  [${completed}/${total}] ${file.path} (${isHtml ? "storage/html" : "storage"})`,
+          );
+        },
+      );
 
-    for (let i = 0; i < storageFiles.length; i++) {
-      const idx = i;
-      const file = storageFiles[idx];
-      const task = (async () => {
-        const content = readFileSync(file.localPath);
-        const response = await fetch(uploadUrls[idx], {
-          method: "POST",
-          headers: { "Content-Type": file.contentType },
-          body: content,
+      for (let i = 0; i < storageFiles.length; i++) {
+        allAssets.push({
+          path: storageFiles[i].path,
+          storageId: storageIds[i],
+          contentType: storageFiles[i].contentType,
+          deploymentId,
         });
-        const { storageId } = (await response.json()) as { storageId: string };
-        storageIds[idx] = storageId;
-        completed++;
-        const isHtml = file.contentType.startsWith("text/html");
-        console.log(
-          `  [${completed}/${total}] ${file.path} (${isHtml ? "storage/html" : "storage"})`,
-        );
-      })().then(() => {
-        pending.delete(task);
-      });
-      pending.add(task);
-      if (pending.size >= concurrency) {
-        await Promise.race(pending);
       }
     }
-    await Promise.all(pending);
 
-    for (let i = 0; i < storageFiles.length; i++) {
-      allAssets.push({
-        path: storageFiles[i].path,
-        storageId: storageIds[i],
-        contentType: storageFiles[i].contentType,
-        deploymentId,
-      });
-    }
-  }
-
-  // Upload CDN files (still uses per-file calls since CDN has its own upload endpoint)
-  if (cdnFiles.length > 0 && cdnUploadBase) {
-    const pending = new Set<Promise<void>>();
-    for (const file of cdnFiles) {
-      const task = (async () => {
+    // Upload CDN files (still uses per-file calls since CDN has its own upload endpoint)
+    if (cdnFiles.length > 0 && cdnUploadBase) {
+      await forEachWithConcurrency(cdnFiles, concurrency, async (file) => {
         const content = readFileSync(file.localPath);
         const uploadResponse = await fetch(`${cdnUploadBase}/fs/upload`, {
           method: "POST",
@@ -282,7 +403,13 @@ async function uploadWithConcurrency(
             `CDN upload failed for ${file.path}: ${uploadResponse.status}`,
           );
         }
-        const { blobId } = (await uploadResponse.json()) as { blobId: string };
+        const { blobId } = (await uploadResponse.json()) as {
+          blobId?: unknown;
+        };
+        if (typeof blobId !== "string") {
+          throw new Error("CDN upload returned no blobId for " + file.path);
+        }
+        uploaded.blobIds.push(blobId);
         allAssets.push({
           path: file.path,
           blobId,
@@ -291,44 +418,37 @@ async function uploadWithConcurrency(
         });
         completed++;
         console.log(`  [${completed}/${total}] ${file.path} (cdn)`);
-      })().then(() => {
-        pending.delete(task);
-      });
-      pending.add(task);
-      if (pending.size >= concurrency) {
-        await Promise.race(pending);
-      }
-    }
-    await Promise.all(pending);
-  }
-
-  // Step 3: Record all assets in one batch call
-  if (allAssets.length > 0) {
-    console.log("  Recording assets...");
-    // recordAssets only handles storageId assets; CDN assets need individual recording
-    const storageAssets = allAssets.filter((a) => a.storageId);
-    const cdnAssets = allAssets.filter((a) => a.blobId);
-
-    if (storageAssets.length > 0) {
-      await convexRunAsync(componentName, "lib:recordAssets", {
-        assets: storageAssets.map((a) => ({
-          path: a.path,
-          storageId: a.storageId!,
-          contentType: a.contentType,
-          deploymentId: a.deploymentId,
-        })),
       });
     }
 
-    // CDN assets still need individual recording (they use blobId not storageId)
-    for (const asset of cdnAssets) {
-      await convexRunAsync(componentName, "lib:recordAsset", {
-        path: asset.path,
-        blobId: asset.blobId,
-        contentType: asset.contentType,
-        deploymentId: asset.deploymentId,
-      });
+    // Publish the complete manifest, SPA setting, and old-asset GC in one
+    // mutation. The previous deployment stays intact if this call fails.
+    console.log("  Publishing deployment...");
+    const output = await convexRunAsync(
+      componentName,
+      "lib:publishDeployment",
+      {
+        assets: allAssets,
+        currentDeploymentId: deploymentId,
+        spaFallback,
+      },
+    );
+    const result = JSON.parse(output) as {
+      deleted?: unknown;
+      blobIds?: unknown;
+    };
+    if (typeof result.deleted !== "number" || !Array.isArray(result.blobIds)) {
+      throw new Error("Component returned an invalid publish result");
     }
+    return {
+      deleted: result.deleted,
+      blobIds: result.blobIds.filter(
+        (blobId): blobId is string => typeof blobId === "string",
+      ),
+    };
+  } catch (error) {
+    await cleanUpFailedUpload(componentName, uploaded, cdnDeleteFunction);
+    throw error;
   }
 }
 
@@ -433,32 +553,21 @@ async function main(): Promise<void> {
   console.log(`Component: ${componentName}`);
   console.log("");
 
-  try {
-    await uploadWithConcurrency(
-      files,
-      componentName,
-      deploymentId,
-      useCdn,
-      cdnUploadBase,
-      args.concurrency,
-    );
-  } catch {
-    console.error("Upload failed.");
-    process.exit(1);
-  }
+  const publishResult = await uploadWithConcurrency(
+    files,
+    componentName,
+    deploymentId,
+    useCdn,
+    cdnUploadBase,
+    args.concurrency,
+    args.spaFallback,
+    args.cdnDeleteFunction,
+  );
 
   console.log("");
 
-  // Commit the deployment: record it as current (with SPA config) and GC
-  // assets from previous deployments.
-  const gcOutput = await convexRunAsync(
-    componentName,
-    "lib:commitDeployment",
-    { currentDeploymentId: deploymentId, spaFallback: args.spaFallback },
-  );
-  const gcResult = JSON.parse(gcOutput);
-  const deletedCount: number = gcResult.deleted;
-  const oldBlobIds: string[] = gcResult.blobIds ?? [];
+  const deletedCount = publishResult.deleted;
+  const oldBlobIds = [...new Set<string>(publishResult.blobIds)];
 
   if (deletedCount > 0) {
     console.log(
@@ -477,9 +586,12 @@ async function main(): Promise<void> {
       console.log(
         `Cleaned up ${oldBlobIds.length} old CDN blob(s) from previous deployments`,
       );
-    } catch {
+    } catch (error) {
       console.warn(
-        `Warning: Could not delete old CDN blobs via ${args.cdnDeleteFunction}.`,
+        "Warning: Could not delete old CDN blobs via " +
+          args.cdnDeleteFunction +
+          ": " +
+          errorMessage(error),
       );
     }
   } else if (oldBlobIds.length > 0) {

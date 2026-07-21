@@ -119,10 +119,139 @@ describe("component lib", () => {
     expect(deployment?.currentDeploymentId).toBe("deploy-new");
   });
 
+  test("commitDeployment skips a legacy or already-deleted storage ID", async () => {
+    const t = initConvexTest();
+    const storageId = await t.run(async (ctx) => {
+      return await ctx.storage.store(new Blob(["legacy"]));
+    });
+    await t.mutation(internal.lib.recordAsset, {
+      path: "/legacy.css",
+      storageId,
+      contentType: "text/css; charset=utf-8",
+      deploymentId: "deploy-old",
+    });
+    await t.run(async (ctx) => {
+      await ctx.storage.delete(storageId);
+    });
+
+    const result = await t.mutation(internal.lib.commitDeployment, {
+      currentDeploymentId: "deploy-new",
+    });
+
+    expect(result).toEqual({ deleted: 0, blobIds: [] });
+    expect(await t.query(internal.lib.listAssets, {})).toEqual([]);
+  });
+
+  test("deletes newly uploaded files after a failed publish", async () => {
+    const t = initConvexTest();
+    const [first, alreadyMissing] = await t.run(async (ctx) => {
+      return await Promise.all([
+        ctx.storage.store(new Blob(["first"])),
+        ctx.storage.store(new Blob(["missing"])),
+      ]);
+    });
+    await t.run(async (ctx) => {
+      await ctx.storage.delete(alreadyMissing);
+    });
+
+    const result = await t.mutation(internal.lib.deleteUploadedFiles, {
+      storageIds: [first, alreadyMissing],
+    });
+
+    expect(result).toEqual({ deleted: 1, alreadyMissing: 1 });
+    await t.run(async (ctx) => {
+      expect(await ctx.storage.get(first)).toBeNull();
+    });
+  });
+
+  test("publishes the manifest, deployment info, and cleanup atomically", async () => {
+    const t = initConvexTest();
+    const oldStorageId = await t.run(async (ctx) => {
+      return await ctx.storage.store(new Blob(["old"]));
+    });
+    await t.mutation(internal.lib.recordAssets, {
+      assets: [
+        {
+          path: "/old.css",
+          storageId: oldStorageId,
+          contentType: "text/css; charset=utf-8",
+          deploymentId: "deploy-old",
+        },
+        {
+          path: "/old.js",
+          blobId: "old-cdn-blob",
+          contentType: "application/javascript; charset=utf-8",
+          deploymentId: "deploy-old",
+        },
+      ],
+    });
+    const newStorageId = await t.run(async (ctx) => {
+      return await ctx.storage.store(new Blob(["new"]));
+    });
+
+    const result = await t.mutation(internal.lib.publishDeployment, {
+      assets: [
+        {
+          path: "/index.html",
+          storageId: newStorageId,
+          contentType: "text/html; charset=utf-8",
+          deploymentId: "deploy-new",
+        },
+      ],
+      currentDeploymentId: "deploy-new",
+      spaFallback: false,
+    });
+
+    expect(result).toEqual({ deleted: 1, blobIds: ["old-cdn-blob"] });
+    expect(await t.query(internal.lib.listAssets, {})).toMatchObject([
+      {
+        path: "/index.html",
+        storageId: newStorageId,
+        deploymentId: "deploy-new",
+      },
+    ]);
+    expect(await t.query(api.lib.getCurrentDeployment, {})).toMatchObject({
+      currentDeploymentId: "deploy-new",
+      spaFallback: false,
+    });
+    await t.run(async (ctx) => {
+      expect(await ctx.storage.get(oldStorageId)).toBeNull();
+      expect(await ctx.storage.get(newStorageId)).not.toBeNull();
+    });
+  });
+
+  test("rejects an invalid publish without changing the live manifest", async () => {
+    const t = initConvexTest();
+    await t.mutation(internal.lib.recordAsset, {
+      path: "/index.html",
+      blobId: "still-live",
+      contentType: "text/html; charset=utf-8",
+      deploymentId: "deploy-old",
+    });
+
+    await expect(
+      t.mutation(internal.lib.publishDeployment, {
+        assets: [
+          {
+            path: "/index.html",
+            blobId: "not-published",
+            contentType: "text/html; charset=utf-8",
+            deploymentId: "wrong-deployment",
+          },
+        ],
+        currentDeploymentId: "deploy-new",
+      }),
+    ).rejects.toThrow("wrong deploymentId");
+
+    expect(
+      await t.query(internal.lib.getByPath, { path: "/index.html" }),
+    ).toMatchObject({ blobId: "still-live", deploymentId: "deploy-old" });
+  });
+
   test("recordAssets batches multiple inserts", async () => {
     const t = initConvexTest();
 
-    await t.mutation(internal.lib.recordAssets, {
+    const result = await t.mutation(internal.lib.recordAssets, {
       assets: [
         {
           path: "/a.js",
@@ -139,8 +268,73 @@ describe("component lib", () => {
       ],
     });
 
+    expect(result).toEqual({ blobIds: [] });
     const all = await t.query(internal.lib.listAssets, {});
     expect(all).toHaveLength(2);
+  });
+
+  test("recordAssets returns replaced CDN blobs for cleanup", async () => {
+    const t = initConvexTest();
+    await t.mutation(internal.lib.recordAsset, {
+      path: "/app.js",
+      blobId: "old-blob",
+      contentType: "application/javascript; charset=utf-8",
+      deploymentId: "deploy-old",
+    });
+
+    const storageId = await t.run(async (ctx) => {
+      return await ctx.storage.store(new Blob(["new"]));
+    });
+    const result = await t.mutation(internal.lib.recordAssets, {
+      assets: [
+        {
+          path: "/app.js",
+          storageId,
+          contentType: "application/javascript; charset=utf-8",
+          deploymentId: "deploy-new",
+        },
+      ],
+    });
+
+    expect(result).toEqual({ blobIds: ["old-blob"] });
+    const current = await t.query(internal.lib.getByPath, { path: "/app.js" });
+    expect(current?.storageId).toBe(storageId);
+    expect(current?.blobId).toBeUndefined();
+  });
+
+  test("recordAssets rejects ambiguous locations and duplicate paths", async () => {
+    const t = initConvexTest();
+
+    await expect(
+      t.mutation(internal.lib.recordAssets, {
+        assets: [
+          {
+            path: "/missing-location.js",
+            contentType: "application/javascript; charset=utf-8",
+            deploymentId: "deploy-1",
+          },
+        ],
+      }),
+    ).rejects.toThrow("exactly one of storageId or blobId");
+
+    await expect(
+      t.mutation(internal.lib.recordAssets, {
+        assets: [
+          {
+            path: "/duplicate.js",
+            blobId: "blob-a",
+            contentType: "application/javascript; charset=utf-8",
+            deploymentId: "deploy-1",
+          },
+          {
+            path: "/duplicate.js",
+            blobId: "blob-b",
+            contentType: "application/javascript; charset=utf-8",
+            deploymentId: "deploy-1",
+          },
+        ],
+      }),
+    ).rejects.toThrow("Duplicate asset path");
   });
 
   describe("resolveAsset", () => {
@@ -223,6 +417,26 @@ describe("component lib", () => {
       expect(asset?.storageUrl).toContain("http");
       expect(asset?.etag).toBe(`"${storageId}"`);
       expect(asset?.contentType).toBe("text/html; charset=utf-8");
+    });
+
+    test("hides inherited or deleted storage rows from compatibility routes", async () => {
+      const t = initConvexTest();
+      const storageId = await t.run(async (ctx) => {
+        return await ctx.storage.store(new Blob(["legacy"]));
+      });
+      await t.mutation(internal.lib.recordAsset, {
+        path: "/index.html",
+        storageId,
+        contentType: "text/html; charset=utf-8",
+        deploymentId: "deploy-old",
+      });
+      await t.run(async (ctx) => {
+        await ctx.storage.delete(storageId);
+      });
+
+      expect(
+        await t.query(api.lib.resolveAssetForHttp, { path: "/index.html" }),
+      ).toBeNull();
     });
 
     test("allows compatibility routes to override SPA fallback", async () => {

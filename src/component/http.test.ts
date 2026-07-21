@@ -6,6 +6,8 @@ import { initConvexTest } from "./setup.test.js";
 import { getMountPrefix } from "./http.js";
 import {
   cacheControlFor,
+  decodeRequestPath,
+  etagMatches,
   getMimeType,
   hasFileExtension,
   isHashedAsset,
@@ -79,7 +81,7 @@ describe("static file serving", () => {
     );
   });
 
-  test("returns 304 when If-None-Match matches the ETag", async () => {
+  test("returns 304 for weak or listed If-None-Match validators", async () => {
     const t = initConvexTest();
     await storeAsset(
       t,
@@ -93,9 +95,29 @@ describe("static file serving", () => {
     expect(etag).toBeTruthy();
 
     const second = await t.fetch("/assets/app-B71cUw87.js", {
-      headers: { "If-None-Match": etag },
+      headers: { "If-None-Match": `"not-current", W/${etag}` },
     });
     expect(second.status).toBe(304);
+  });
+
+  test("decodes percent-encoded asset paths", async () => {
+    const t = initConvexTest();
+    await storeAsset(
+      t,
+      "/docs/hello world.txt",
+      "hello",
+      "text/plain; charset=utf-8",
+    );
+
+    const res = await t.fetch("/docs/hello%20world.txt", {});
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("hello");
+  });
+
+  test("returns 400 for malformed percent encoding", async () => {
+    const t = initConvexTest();
+    const res = await t.fetch("/bad%ZZpath", {});
+    expect(res.status).toBe(400);
   });
 
   test("SPA fallback serves index.html for extension-less misses", async () => {
@@ -128,8 +150,28 @@ describe("static file serving", () => {
   test("shows the setup page when nothing is deployed", async () => {
     const t = initConvexTest();
     const res = await t.fetch("/", {});
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(503);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    expect(res.headers.get("Retry-After")).toBe("5");
     expect(await res.text()).toContain("no static files have been deployed");
+  });
+
+  test("shows the setup page for an inherited or deleted index storage row", async () => {
+    const t = initConvexTest();
+    const storageId = await storeAsset(
+      t,
+      "/index.html",
+      "legacy",
+      "text/html; charset=utf-8",
+    );
+    await t.run(async (ctx) => {
+      await ctx.storage.delete(storageId);
+    });
+
+    const res = await t.fetch("/", {});
+    expect(res.status).toBe(503);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    expect(res.headers.get("Retry-After")).toBe("5");
   });
 
   test("extension-less misses 404 when SPA fallback is disabled", async () => {
@@ -188,6 +230,18 @@ describe("serving helpers", () => {
     expect(cacheControlFor("/page-B71cUw87.html")).toBe(
       "public, max-age=0, must-revalidate",
     );
+  });
+
+  test("decodeRequestPath handles encoded and malformed paths", () => {
+    expect(decodeRequestPath("/hello%20world.txt")).toBe("/hello world.txt");
+    expect(decodeRequestPath("/bad%ZZpath")).toBeNull();
+  });
+
+  test("etagMatches supports weak tags, lists, and wildcard validators", () => {
+    expect(etagMatches('W/"asset-1"', '"asset-1"')).toBe(true);
+    expect(etagMatches('"other", W/"asset-1"', '"asset-1"')).toBe(true);
+    expect(etagMatches("*", '"asset-1"')).toBe(true);
+    expect(etagMatches('"other"', '"asset-1"')).toBe(false);
   });
 
   describe("getMountPrefix", () => {

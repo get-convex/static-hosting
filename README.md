@@ -18,15 +18,38 @@ alongside your backend.
   that fires when a new version ships, with a drop-in `<UpdateBanner />`.
 - 🔒 **Authenticated uploads** — uploads go through the Convex CLI's
   authenticated session; there's no public upload endpoint.
-- 🧹 **Automatic cleanup** — files from previous deployments are garbage
-  collected on every deploy.
+- 🧹 **Automatic cleanup** — files from previous 0.2.x deployments are garbage
+  collected on every deploy. The migration guide covers one-time v1 cleanup.
 
 https://github.com/user-attachments/assets/5eaf781f-87da-4292-9f96-38070c86cd39
 
 ## Quick Start
 
+> **Upgrading an existing 0.1.x app?** This is not a package-only update. Point
+> your coding agent at the [0.1.x to 0.2.x migration guide](./MIGRATION.md)
+> before it changes anything. The guide covers the storage-breaking re-upload,
+> preserving auth and webhook URLs, historical v1 blob auditing, deployment
+> sequencing, and verification.
+
+You can give an agent this prompt:
+
+```text
+Upgrade this app from @convex-dev/static-hosting 0.1.x to 0.2.x. Before editing,
+read and follow:
+https://github.com/get-convex/static-hosting/blob/main/MIGRATION.md
+
+Inventory the routes in convex/http.ts and preserve their current URLs unless I
+explicitly approve moving them. Confirm Convex is at least 1.37.0. Before the
+first 0.2.x upload, capture the current 0.1.x asset manifest and audit app
+storage for older v1 orphans that the manifest may not list. Do not delete any
+old blob until I approve the exact IDs after the rollback window. Do not edit
+convex/_generated files by hand. Test on a development deployment, re-upload
+every static asset, and verify the existing auth routes and sessions where
+applicable, SPA fallback, 404s, and cache headers before production.
+```
+
 ```bash
-npm install @convex-dev/static-hosting
+npm install convex@^1.37.0 @convex-dev/static-hosting
 npx @convex-dev/static-hosting setup
 ```
 
@@ -43,8 +66,10 @@ Your app is live at `https://<deployment>.convex.site`.
 
 ### 1. Install
 
+This package requires Convex 1.37.0 or newer.
+
 ```bash
-npm install @convex-dev/static-hosting
+npm install convex@^1.37.0 @convex-dev/static-hosting
 ```
 
 ### 2. Register the component
@@ -157,7 +182,7 @@ CLI-driven build and standalone `npm run build` working.
 Deploy both Convex backend and static files with a single command:
 
 ```bash
-npx convex init            # first time only
+npx convex login           # first time only
 npx @convex-dev/static-hosting deploy
 ```
 
@@ -208,7 +233,9 @@ npx @convex-dev/static-hosting deploy [options]
   -c, --component <name>    Component instance name (default: staticHosting)
       --skip-build          Skip the build step (use existing dist)
       --skip-convex         Skip Convex backend deployment
+      --build-command <cmd> Build command to run (default: 'npm run build')
       --no-spa              Disable SPA fallback (404 instead of /index.html)
+      --spa                 Enable SPA fallback (default)
       --cdn                 Use the legacy convex-fs integration
 
 npx @convex-dev/static-hosting upload [options]
@@ -216,11 +243,23 @@ npx @convex-dev/static-hosting upload [options]
   -c, --component <name>    Component instance name (default: staticHosting)
       --prod                Deploy to production deployment
   -b, --build               Run 'npm run build' with VITE_CONVEX_URL set
+      --build-command <cmd> Override the build command; implies --build
       --no-spa              Disable SPA fallback (404 instead of /index.html)
+      --spa                 Enable SPA fallback (default)
       --cdn                 Use the legacy convex-fs integration
       --cdn-delete-function Legacy app function that deletes CDN blobs
   -j, --concurrency <n>     Parallel upload workers (default: 5)
 ```
+
+The CLI publishes the complete asset manifest, deployment settings, and old-file
+cleanup in one atomic Convex mutation, so new HTML cannot become visible before
+its referenced assets and a failed publish leaves the previous deployment live.
+New component files from a failed upload are removed automatically. It stops
+with a clear error if the serialized manifest exceeds 750 KiB; shorten asset
+paths or reduce the number of emitted files in that unusual case.
+
+Convex HTTP routes currently support GET but not HEAD. Configure uptime checks
+to make a lightweight GET request rather than a HEAD request.
 
 If you mount the component under a different name with
 `app.use(staticHosting, { name: "..." })`, pass it with `--component`.
@@ -341,7 +380,9 @@ rather than living in a separate env var. Requests for paths with an extension
 
 0.2.0 moves uploads and file storage into the component. You must remove the
 `exposeUploadApi` re-exports from `convex/staticHosting.ts` and **redeploy your
-assets** because 0.1.x files lived in the app's storage.
+assets** because 0.1.x files lived in the app's storage. Capture both the
+current v1 manifest and a broader app-storage inventory first: older v1 uploads
+may have left static blobs that the current manifest no longer lists.
 
 You can then choose either serving mode:
 
@@ -351,8 +392,8 @@ You can then choose either serving mode:
   `registerStaticRoutes` call. The 0.2 implementation reads the new
   component-owned files without changing those route URLs.
 
-See the [upgrade guide in INTEGRATION.md](./INTEGRATION.md#upgrading-from-01x)
-for exact steps and the optional zero-downtime cutover.
+See the dedicated [0.1.x to 0.2.x migration guide](./MIGRATION.md) for exact
+steps, verification, rollback, and the optional staged cutover.
 
 ## How it works
 

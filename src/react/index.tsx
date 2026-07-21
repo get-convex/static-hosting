@@ -9,6 +9,7 @@ type DeploymentInfo = {
   _creationTime: number;
   currentDeploymentId: string;
   deployedAt: number;
+  spaFallback?: boolean;
 } | null;
 
 type DeploymentQueryRef = FunctionReference<

@@ -128,3 +128,36 @@ export function cacheControlFor(path: string): string {
     ? "public, max-age=31536000, immutable"
     : "public, max-age=0, must-revalidate";
 }
+
+/**
+ * Decode the URL pathname before looking it up in the asset table. A malformed
+ * escape sequence is a bad request, not a missing static asset.
+ */
+export function decodeRequestPath(pathname: string): string | null {
+  try {
+    return decodeURIComponent(pathname);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * If-None-Match uses weak comparison for GET and HEAD requests. Browsers and
+ * proxies may send a weak validator or a comma-separated list of validators.
+ */
+export function etagMatches(
+  ifNoneMatch: string | null,
+  currentEtag: string,
+): boolean {
+  if (!ifNoneMatch) return false;
+
+  const normalize = (value: string) => value.trim().replace(/^W\//, "").trim();
+  const normalizedCurrent = normalize(currentEtag);
+
+  return ifNoneMatch.split(",").some((candidate) => {
+    const normalizedCandidate = normalize(candidate);
+    return (
+      normalizedCandidate === "*" || normalizedCandidate === normalizedCurrent
+    );
+  });
+}

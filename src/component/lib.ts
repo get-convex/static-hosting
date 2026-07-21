@@ -58,22 +58,15 @@ async function resolveAssetDocument(
 }
 
 async function deleteStorageFile(ctx: MutationCtx, storageId: Id<"_storage">) {
-  try {
-    await ctx.storage.delete(storageId);
-    return true;
-  } catch (error) {
-    // 0.1.x stored app-owned storage IDs in the component's asset table.
-    // They are intentionally unreadable from component storage during the
-    // first 0.2.x upload, so treat them like already-deleted files.
-    if (
-      error instanceof Error &&
-      (error.message.includes("not found") ||
-        error.message === "Delete on non-existent doc")
-    ) {
-      return false;
-    }
-    throw error;
-  }
+  // A v2 component mounted with the old `selfHosting` name can inherit v1 rows
+  // containing app-owned storage IDs. They are deliberately invisible in the
+  // component namespace. Checking metadata avoids relying on backend error text
+  // and treats both those foreign IDs and already-deleted files as absent.
+  const metadata = await ctx.db.system.get("_storage", storageId);
+  if (metadata === null) return false;
+
+  await ctx.storage.delete(storageId);
+  return true;
 }
 
 export const getCurrentDeployment = query({
@@ -100,6 +93,12 @@ export const resolveAssetForHttp = query({
     const storageUrl = asset.storageId
       ? await ctx.storage.getUrl(asset.storageId)
       : null;
+
+    // During a same-name v1 to v2 migration, inherited v1 rows point at app
+    // storage and cannot be fetched by the component. Return no asset so the
+    // compatibility HTTP handler shows its normal setup response for `/` until
+    // the first v2 upload replaces the manifest.
+    if (asset.storageId && !storageUrl && !asset.blobId) return null;
 
     return {
       ...(storageUrl ? { storageUrl } : {}),
@@ -182,6 +181,23 @@ export const generateUploadUrls = internalMutation({
   },
 });
 
+export const deleteUploadedFiles = internalMutation({
+  args: { storageIds: v.array(v.id("_storage")) },
+  returns: v.object({ deleted: v.number(), alreadyMissing: v.number() }),
+  handler: async (ctx, { storageIds }) => {
+    let deleted = 0;
+    let alreadyMissing = 0;
+    for (const storageId of storageIds) {
+      if (await deleteStorageFile(ctx, storageId)) {
+        deleted++;
+      } else {
+        alreadyMissing++;
+      }
+    }
+    return { deleted, alreadyMissing };
+  },
+});
+
 const recordAssetFields = {
   path: v.string(),
   storageId: v.optional(v.id("_storage")),
@@ -190,10 +206,70 @@ const recordAssetFields = {
   deploymentId: v.string(),
 };
 
+function assertAssetLocation({
+  path,
+  storageId,
+  blobId,
+}: {
+  path: string;
+  storageId?: Id<"_storage">;
+  blobId?: string;
+}) {
+  if ((storageId === undefined) === (blobId === undefined)) {
+    throw new Error(
+      "Asset " + path + " must have exactly one of storageId or blobId",
+    );
+  }
+}
+
+function assertAssetManifest(
+  assets: Array<{
+    path: string;
+    storageId?: Id<"_storage">;
+    blobId?: string;
+    deploymentId: string;
+  }>,
+  deploymentId?: string,
+) {
+  const paths = new Set<string>();
+  for (const asset of assets) {
+    assertAssetLocation(asset);
+    if (paths.has(asset.path)) {
+      throw new Error("Duplicate asset path: " + asset.path);
+    }
+    if (deploymentId !== undefined && asset.deploymentId !== deploymentId) {
+      throw new Error("Asset " + asset.path + " has the wrong deploymentId");
+    }
+    paths.add(asset.path);
+  }
+}
+
+async function setCurrentDeployment(
+  ctx: MutationCtx,
+  currentDeploymentId: string,
+  spaFallback: boolean,
+) {
+  const existing = await ctx.db.query("deploymentInfo").first();
+  if (existing) {
+    await ctx.db.patch("deploymentInfo", existing._id, {
+      currentDeploymentId,
+      deployedAt: Date.now(),
+      spaFallback,
+    });
+  } else {
+    await ctx.db.insert("deploymentInfo", {
+      currentDeploymentId,
+      deployedAt: Date.now(),
+      spaFallback,
+    });
+  }
+}
+
 export const recordAsset = internalMutation({
   args: recordAssetFields,
-  returns: v.null(),
+  returns: v.union(v.string(), v.null()),
   handler: async (ctx, args) => {
+    assertAssetLocation(args);
     const existing = await ctx.db
       .query("staticAssets")
       .withIndex("by_path", (q) => q.eq("path", args.path))
@@ -211,14 +287,17 @@ export const recordAsset = internalMutation({
       contentType: args.contentType,
       deploymentId: args.deploymentId,
     });
-    return null;
+    return existing?.blobId ?? null;
   },
 });
 
 export const recordAssets = internalMutation({
   args: { assets: v.array(v.object(recordAssetFields)) },
-  returns: v.null(),
+  returns: v.object({ blobIds: v.array(v.string()) }),
   handler: async (ctx, { assets }) => {
+    assertAssetManifest(assets);
+
+    const blobIds: string[] = [];
     for (const asset of assets) {
       const existing = await ctx.db
         .query("staticAssets")
@@ -227,6 +306,9 @@ export const recordAssets = internalMutation({
       if (existing) {
         if (existing.storageId) {
           await deleteStorageFile(ctx, existing.storageId);
+        }
+        if (existing.blobId) {
+          blobIds.push(existing.blobId);
         }
         await ctx.db.delete("staticAssets", existing._id);
       }
@@ -238,7 +320,50 @@ export const recordAssets = internalMutation({
         deploymentId: asset.deploymentId,
       });
     }
-    return null;
+    return { blobIds };
+  },
+});
+
+// Publish the complete manifest, deployment metadata, and old-asset cleanup in
+// one mutation. Until this succeeds, the previous deployment remains wholly
+// live. Newly uploaded files are still unreferenced, so the CLI can safely
+// delete them if this mutation fails.
+export const publishDeployment = internalMutation({
+  args: {
+    assets: v.array(v.object(recordAssetFields)),
+    currentDeploymentId: v.string(),
+    spaFallback: v.optional(v.boolean()),
+  },
+  returns: v.object({
+    deleted: v.number(),
+    blobIds: v.array(v.string()),
+  }),
+  handler: async (ctx, { assets, currentDeploymentId, spaFallback }) => {
+    assertAssetManifest(assets, currentDeploymentId);
+
+    const oldAssets = await ctx.db.query("staticAssets").collect();
+    const blobIds: string[] = [];
+    let deleted = 0;
+    for (const asset of oldAssets) {
+      if (asset.storageId && (await deleteStorageFile(ctx, asset.storageId))) {
+        deleted++;
+      }
+      if (asset.blobId) blobIds.push(asset.blobId);
+      await ctx.db.delete("staticAssets", asset._id);
+    }
+
+    for (const asset of assets) {
+      await ctx.db.insert("staticAssets", {
+        path: asset.path,
+        ...(asset.storageId ? { storageId: asset.storageId } : {}),
+        ...(asset.blobId ? { blobId: asset.blobId } : {}),
+        contentType: asset.contentType,
+        deploymentId: asset.deploymentId,
+      });
+    }
+
+    await setCurrentDeployment(ctx, currentDeploymentId, spaFallback ?? true);
+    return { deleted, blobIds };
   },
 });
 
@@ -273,21 +398,11 @@ export const commitDeployment = internalMutation({
       await ctx.db.delete("staticAssets", asset._id);
     }
 
-    const spaFallback = args.spaFallback ?? true;
-    const existing = await ctx.db.query("deploymentInfo").first();
-    if (existing) {
-      await ctx.db.patch("deploymentInfo", existing._id, {
-        currentDeploymentId: args.currentDeploymentId,
-        deployedAt: Date.now(),
-        spaFallback,
-      });
-    } else {
-      await ctx.db.insert("deploymentInfo", {
-        currentDeploymentId: args.currentDeploymentId,
-        deployedAt: Date.now(),
-        spaFallback,
-      });
-    }
+    await setCurrentDeployment(
+      ctx,
+      args.currentDeploymentId,
+      args.spaFallback ?? true,
+    );
     return { deleted, blobIds };
   },
 });

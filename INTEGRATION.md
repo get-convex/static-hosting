@@ -17,9 +17,12 @@ SPA routing and smart caching.
 ## Quick Start
 
 ```bash
-npm install @convex-dev/static-hosting
+npm install convex@^1.37.0 @convex-dev/static-hosting
 npx @convex-dev/static-hosting setup
 ```
+
+Convex 1.37.0 is the minimum supported version. The optional React helpers use
+`useQuery_experimental`, which is not exported by older Convex releases.
 
 The setup script:
 
@@ -216,9 +219,16 @@ Do not use `--cdn` for a new integration. It targets an older, unauthenticated
 upload authentication, which this CLI does not yet provide.
 
 Existing deployments that already expose the legacy routes can keep using the
-flag during migration. Everyone else should use the default Convex storage
-mode. Supporting current ConvexFS properly needs a separate authenticated
-upload and garbage-collection design, not a copy-paste configuration snippet.
+flag during migration. Everyone else should use the default Convex storage mode.
+Supporting current ConvexFS properly needs a separate authenticated upload and
+garbage-collection design, not a copy-paste configuration snippet.
+
+The CLI uploads every file before atomically publishing the mixed storage/CDN
+manifest, deployment settings, and old-file cleanup. New HTML does not point at
+asset records that are still missing, and a failed publish leaves the previous
+deployment live. Newly uploaded component files are removed after a failed
+upload or publish. Failed legacy CDN uploads can only be cleaned automatically
+when `--cdn-delete-function` is configured.
 
 ## Non-Vite bundlers
 
@@ -254,7 +264,9 @@ npx @convex-dev/static-hosting deploy [options]
   -c, --component <name>    Component instance name (default: staticHosting)
       --skip-build          Skip the build step
       --skip-convex         Skip Convex backend deployment
+      --build-command <cmd> Build command to run (default: 'npm run build')
       --no-spa              Disable SPA fallback (404 instead of /index.html)
+      --spa                 Enable SPA fallback (default)
       --cdn                 Upload non-HTML assets to convex-fs CDN
 
 npx @convex-dev/static-hosting upload [options]
@@ -262,11 +274,22 @@ npx @convex-dev/static-hosting upload [options]
   -c, --component <name>    Component instance name (default: staticHosting)
       --prod                Deploy to production deployment
   -b, --build               Run 'npm run build' with VITE_CONVEX_URL set
+      --build-command <cmd> Override the build command; implies --build
       --no-spa              Disable SPA fallback (404 instead of /index.html)
+      --spa                 Enable SPA fallback (default)
       --cdn                 Upload non-HTML assets to convex-fs CDN
       --cdn-delete-function App function path that deletes CDN blobs
   -j, --concurrency <n>     Parallel upload workers (default: 5)
 ```
+
+The complete manifest, deployment settings, and old-file cleanup are published
+atomically after all uploads finish. The CLI rejects manifests larger than 750
+KiB with an actionable error instead of running into an operating-system
+argument or Convex mutation limit, then removes the unreferenced component files
+uploaded by that failed attempt.
+
+Convex HTTP routers currently expose GET but not HEAD routes. Uptime monitors
+must use a lightweight GET request.
 
 ## Mounting under a sub-path
 
@@ -310,105 +333,19 @@ env var. Re-deploy without `--no-spa` or with `--spa` to turn it back on.
 
 ## Upgrading from 0.1.x
 
-0.2.0 is a **storage-breaking change**. Files uploaded by 0.1.x lived in the
-app's storage. Files uploaded by 0.2.x live in the component, so every app must
-redeploy its assets once.
+0.2.0 is a **storage-breaking change**. Every existing app must upgrade to
+Convex 1.37.0 or newer, remove its `exposeUploadApi` wrappers, choose a
+root-routing mode, regenerate the component API, and upload its assets again.
+The old app-storage blobs also need an explicit cleanup after the rollback
+window; component-private storage cannot delete them automatically. The current
+v1 manifest is only a lower bound because older v1 uploads may already have left
+historical blobs in app storage.
 
-1. Upgrade `@convex-dev/static-hosting` and run `npx convex dev` so codegen sees
-   the new component API.
-2. Remove the `exposeUploadApi` re-exports from `convex/staticHosting.ts`. Keep
-   only `exposeDeploymentQuery` if you use `<UpdateBanner />`; otherwise delete
-   the file.
-3. Choose a serving mode:
-   - **Component-owned root:** use the config from
-     [Manual Setup](#manual-setup), remove `registerStaticRoutes`, and delete
-     `convex/http.ts` if it is empty.
-   - **Keep existing root routes:** leave `defineApp()` without an app prefix,
-     install the component without `httpPrefix`, and keep the existing
-     `registerStaticRoutes(http, components.staticHosting)` call. This preserves
-     auth, webhook, and API URLs while using component-owned storage.
-4. Run `npx @convex-dev/static-hosting deploy` to deploy the backend and
-   repopulate component storage.
-
-The recommended component instance name is `staticHosting`. If you keep an old
-name such as `selfHosting`, keep using `components.selfHosting` and pass
-`--component selfHosting` to `deploy` and `upload`.
-
-Removed from the client API: `exposeUploadApi`. `registerStaticRoutes`,
-`exposeDeploymentQuery`, and `getConvexUrl` remain.
-
-### Side-by-side migration (seamless cutover)
-
-You can run 0.1.x and 0.2.x at the same time and make the final switch a single
-mount change with **no re-upload** — so `/` is correct the instant the new mount
-goes live and the old version keeps serving until then. The trick is to upload
-assets built for the _final_ base path (`/`) ahead of the flip, so the cutover
-just exposes assets that are already correct.
-
-The two versions don't collide: 0.1.x is named `selfHosting` and serves via your
-app's `convex/http.ts`, while 0.2.x is named `staticHosting` and serves itself.
-Both ship from the same package name, so install the old one under an **npm
-alias**:
-
-1. Install the new version, and the old one aliased to a distinct slug:
-
-   ```bash
-   npm install @convex-dev/static-hosting@^0.2.0
-   npm install static-hosting-legacy@npm:@convex-dev/static-hosting@0.1.3
-   ```
-
-2. Mount both in `convex/convex.config.ts`, importing the legacy config from the
-   alias and staging the new mount at a sub-path:
-
-   ```ts
-   import { defineApp } from "convex/server";
-   import staticHostingLegacy from "static-hosting-legacy/convex.config.js";
-   import staticHosting from "@convex-dev/static-hosting/convex.config.js";
-
-   const app = defineApp();
-   app.use(staticHostingLegacy); // 0.1.x — keeps serving the live site at /
-   app.use(staticHosting, { httpPrefix: "/next/" }); // 0.2.x — staged here first
-
-   export default app;
-   ```
-
-3. Keep your existing `convex/http.ts` registering the **legacy** routes at the
-   root, importing `registerStaticRoutes` from the alias:
-
-   ```ts
-   import { registerStaticRoutes } from "static-hosting-legacy";
-   import { components } from "./_generated/api";
-
-   registerStaticRoutes(http, components.selfHosting);
-   ```
-
-4. Build for the **final** base path (`/`, the default) and upload that to the
-   new component. For Vite, keep the CLI-managed production `VITE_CONVEX_URL`
-   but override Vite's base path for this one build:
-
-   ```bash
-   npx @convex-dev/static-hosting upload --build --prod \
-     --build-command "npm run build -- --base=/"
-   ```
-
-   The CLI still supplies the production backend URL. The explicit Vite
-   `--base=/` only overrides `STATIC_HOSTING_BASE_PATH` from the current staged
-   mount (`/next/`). If your bundler is not Vite, use its equivalent base-path
-   override while preserving the CLI-provided `VITE_CONVEX_URL`.
-
-   Because the assets reference the absolute root (`/assets/…`), the app won't
-   be fully clickable at `/next/` — that root is still owned by the old version.
-   `/next/` is a smoke test (the component is mounted, serves `index.html`, and
-   the files exist at `/next/assets/…`), not a full preview. That's the price of
-   a re-upload-free cutover.
-
-5. **Cut over** with a single deploy: delete the legacy `registerStaticRoutes`
-   call (and `convex/http.ts` if it's now empty), drop
-   `app.use(staticHostingLegacy)`, change the new mount to `httpPrefix: "/"`,
-   and `npx convex deploy`. The new component already holds the `/`-based
-   assets, so `/` is correct immediately — no rebuild, no re-upload, no
-   asset-less window. Once traffic is served by 0.2.x, remove the
-   `static-hosting-legacy` dependency.
+Read the dedicated [0.1.x to 0.2.x migration guide](./MIGRATION.md) before
+upgrading. It includes both routing options, component-name and CLI changes,
+development verification, rollback steps, and a staged production cutover that
+avoids an asset-less window. It also shows how to audit app storage without
+mistaking unrelated application uploads for static-hosting files.
 
 ## Troubleshooting
 
@@ -469,5 +406,6 @@ served from `<deployment>.convex.site`.
 ## Additional Resources
 
 - [README.md](./README.md)
+- [0.1.x to 0.2.x migration guide](./MIGRATION.md)
 - [`example/`](./example) — Working example app
 - [Component source](./src/component)

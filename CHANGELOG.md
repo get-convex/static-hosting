@@ -5,6 +5,9 @@
 Component-owned HTTP and storage. **Breaking — redeploy your static assets after
 upgrading.**
 
+See the [0.1.x to 0.2.x migration guide](./MIGRATION.md) before upgrading an
+existing deployment.
+
 - The component now hosts its own HTTP endpoints and owns the file storage that
   serves them. Wire it up with `app.use(staticHosting, { httpPrefix: "/" })` and
   delete `convex/http.ts` + the upload-API re-exports from
@@ -22,11 +25,17 @@ upgrading.**
   `--component <your-name>`.
 - `useDeploymentUpdates` / `UpdateBanner` use `useQuery_experimental` and
   default to `api.staticHosting.getCurrentDeployment`. If you don't surface
-  deployment updates, you no longer need to expose anything.
+  deployment updates, you no longer need to expose anything. Convex 1.37.0 is
+  now the minimum supported peer version because older releases do not export
+  that hook.
 - Assets uploaded under 0.1.x lived in the app's storage — those references
   won't resolve in 0.2.x. Run `npx @convex-dev/static-hosting deploy` to
   repopulate. The first 0.2.x upload safely discards those legacy storage
-  references instead of trying to delete them from component storage.
+  references instead of trying to delete them from component storage. The old
+  blobs remain in app storage until you explicitly clean them up after the
+  rollback window. Older 0.1.x deploys may also have left historical blobs that
+  the current asset manifest no longer lists, so follow the migration guide's
+  app-storage audit before cleanup.
 - Default setup prefixes your own HTTP routes with
   `defineApp({ httpPrefix: "/api" })` so the static site can own the root
   without the catch-all route shadowing them. Use `registerStaticRoutes` when
@@ -45,6 +54,16 @@ upgrading.**
   unauthenticated convex-fs API and does not work with current ConvexFS. New
   integrations should use Convex storage until authenticated CDN uploads are
   designed.
+- Storage and legacy CDN assets, deployment settings, and old-file cleanup are
+  published in one atomic mutation after all uploads finish. New HTML cannot
+  race ahead of its referenced asset records, and a failed publish leaves the
+  previous deployment live. Replaced CDN blob IDs are retained for cleanup.
+- Upload errors now report the failing file and HTTP status. Oversized manifests
+  fail with a clear size error, and newly uploaded component files are removed
+  after a failed upload or publish.
+- Static handlers decode percent-encoded paths, accept weak or listed ETags, and
+  return a non-cacheable HTTP 503 setup page until the first upload succeeds.
+- Removed the install-time console banner.
 
 ## 0.1.4
 

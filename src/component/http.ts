@@ -3,6 +3,8 @@ import { httpAction } from "./_generated/server.js";
 import { internal } from "./_generated/api.js";
 import {
   cacheControlFor,
+  decodeRequestPath,
+  etagMatches,
   getMimeType,
   getSetupHtml,
   isHtmlContentType,
@@ -15,7 +17,8 @@ export function getMountPrefix(): string {
   const siteUrl = process.env.CONVEX_SITE_URL;
   if (!siteUrl) return "";
   try {
-    const pathname = new URL(siteUrl).pathname;
+    const pathname = decodeRequestPath(new URL(siteUrl).pathname);
+    if (pathname === null) return "";
     return pathname === "/" ? "" : pathname.replace(/\/$/, "");
   } catch {
     return "";
@@ -24,7 +27,14 @@ export function getMountPrefix(): string {
 
 const serveStaticFile = httpAction(async (ctx, request) => {
   const url = new URL(request.url);
-  let path = url.pathname;
+  const decodedPath = decodeRequestPath(url.pathname);
+  if (decodedPath === null) {
+    return new Response("Bad Request", {
+      status: 400,
+      headers: { "Content-Type": "text/plain" },
+    });
+  }
+  let path = decodedPath;
 
   const mountPrefix = getMountPrefix();
   if (mountPrefix && path.startsWith(mountPrefix)) {
@@ -44,8 +54,12 @@ const serveStaticFile = httpAction(async (ctx, request) => {
   if (!asset) {
     if (path === "/index.html") {
       return new Response(getSetupHtml(), {
-        status: 200,
-        headers: { "Content-Type": "text/html; charset=utf-8" },
+        status: 503,
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+          "Retry-After": "5",
+        },
       });
     }
     return new Response("Not Found", {
@@ -80,7 +94,7 @@ const serveStaticFile = httpAction(async (ctx, request) => {
   const ifNoneMatch = request.headers.get("If-None-Match");
   const cacheControl = cacheControlFor(path);
 
-  if (ifNoneMatch === etag) {
+  if (etagMatches(ifNoneMatch, etag)) {
     return new Response(null, {
       status: 304,
       headers: { ETag: etag, "Cache-Control": cacheControl },
@@ -89,6 +103,19 @@ const serveStaticFile = httpAction(async (ctx, request) => {
 
   const blob = await ctx.storage.get(asset.storageId);
   if (!blob) {
+    // A same-name v1 to v2 migration can temporarily inherit an index row that
+    // points at app-owned storage. Treat that interval like an empty component
+    // rather than returning a misleading permanent storage error.
+    if (asset.path === "/index.html") {
+      return new Response(getSetupHtml(), {
+        status: 503,
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+          "Retry-After": "5",
+        },
+      });
+    }
     return new Response("Storage error", {
       status: 500,
       headers: { "Content-Type": "text/plain" },

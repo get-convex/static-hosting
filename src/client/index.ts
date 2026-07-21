@@ -3,13 +3,24 @@ import {
   queryGeneric,
   type HttpRouter,
 } from "convex/server";
+import { v } from "convex/values";
 import type { ComponentApi } from "../component/_generated/component.js";
 import {
   cacheControlFor,
+  decodeRequestPath,
+  etagMatches,
   getMimeType,
   getSetupHtml,
   isHtmlContentType,
 } from "../component/serving.js";
+
+const deploymentInfoValidator = v.object({
+  _id: v.string(),
+  _creationTime: v.number(),
+  currentDeploymentId: v.string(),
+  deployedAt: v.number(),
+  spaFallback: v.optional(v.boolean()),
+});
 
 /**
  * Register app-owned HTTP routes for static hosting.
@@ -57,7 +68,14 @@ export function registerStaticRoutes(
 
   const serveStaticFile = httpActionGeneric(async (ctx, request) => {
     const url = new URL(request.url);
-    let path = url.pathname;
+    const decodedPath = decodeRequestPath(url.pathname);
+    if (decodedPath === null) {
+      return new Response("Bad Request", {
+        status: 400,
+        headers: { "Content-Type": "text/plain" },
+      });
+    }
+    let path = decodedPath;
 
     if (normalizedPrefix && path.startsWith(normalizedPrefix)) {
       path = path.slice(normalizedPrefix.length) || "/";
@@ -74,8 +92,12 @@ export function registerStaticRoutes(
     if (!asset) {
       if (path === "/index.html") {
         return new Response(getSetupHtml(), {
-          status: 200,
-          headers: { "Content-Type": "text/html; charset=utf-8" },
+          status: 503,
+          headers: {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
+            "Retry-After": "5",
+          },
         });
       }
       return new Response("Not Found", {
@@ -107,7 +129,10 @@ export function registerStaticRoutes(
       });
     }
 
-    if (asset.etag && request.headers.get("If-None-Match") === asset.etag) {
+    if (
+      asset.etag &&
+      etagMatches(request.headers.get("If-None-Match"), asset.etag)
+    ) {
       return new Response(null, {
         status: 304,
         headers: { ETag: asset.etag, "Cache-Control": cacheControl },
@@ -169,6 +194,7 @@ export function exposeDeploymentQuery(component: ComponentApi) {
   return {
     getCurrentDeployment: queryGeneric({
       args: {},
+      returns: v.union(deploymentInfoValidator, v.null()),
       handler: async (ctx) => {
         return await ctx.runQuery(component.lib.getCurrentDeployment, {});
       },
