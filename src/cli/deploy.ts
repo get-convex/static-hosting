@@ -21,56 +21,16 @@ import {
   spawnShell,
   spawnStaticHostingCli,
 } from "./commands.js";
-
-interface ParsedArgs {
-  dist: string;
-  component: string;
-  help: boolean;
-  skipBuild: boolean;
-  skipConvex: boolean;
-  cdn: boolean;
-  spaFallback: boolean;
-  buildCommand: string;
-}
-
-function parseArgs(args: string[]): ParsedArgs {
-  const result: ParsedArgs = {
-    dist: "./dist",
-    component: "staticHosting",
-    help: false,
-    skipBuild: false,
-    skipConvex: false,
-    cdn: false,
-    spaFallback: true,
-    buildCommand: "npm run build",
-  };
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === "--help" || arg === "-h") {
-      result.help = true;
-    } else if (arg === "--dist" || arg === "-d") {
-      result.dist = args[++i] || result.dist;
-    } else if (arg === "--component" || arg === "-c") {
-      result.component = args[++i] || result.component;
-    } else if (arg === "--skip-build") {
-      result.skipBuild = true;
-    } else if (arg === "--skip-convex") {
-      result.skipConvex = true;
-    } else if (arg === "--cdn") {
-      result.cdn = true;
-    } else if (arg === "--no-spa") {
-      result.spaFallback = false;
-    } else if (arg === "--spa") {
-      result.spaFallback = true;
-    } else if (arg === "--build-command") {
-      const cmd = args[++i];
-      if (cmd) result.buildCommand = cmd;
-    }
-  }
-
-  return result;
-}
+import {
+  buildDeployUploadArgs,
+  parseDeployArgs,
+  type DeployArgs,
+} from "./args.js";
+import {
+  buildEnvironment,
+  buildEnvironmentChanged,
+  type DeploymentUrls,
+} from "./deployEnvironment.js";
 
 function showHelp(): void {
   console.log(`
@@ -88,12 +48,14 @@ Options:
       --no-spa                Disable SPA fallback (404 instead of /index.html)
       --spa                   Enable SPA fallback (default)
       --cdn                   Use the legacy convex-fs integration
+      --cdn-delete-function <name>  Legacy app function that deletes CDN blobs
   -h, --help                  Show this help message
 
 Deployment Flow:
   1. Build frontend with production VITE_CONVEX_URL
   2. Deploy Convex backend (npx convex deploy)
-  3. Deploy static files to Convex storage
+  3. Rebuild if the backend changed the static mount path
+  4. Deploy static files to Convex storage
 
 Examples:
   # Full deployment
@@ -107,14 +69,9 @@ Examples:
 `);
 }
 
-interface DeploymentUrls {
-  siteUrl: string;
-  cloudUrl: string;
-}
-
 /**
  * Resolve the component's deployment URLs (siteUrl + cloudUrl). Returns null
- * if the component isn't reachable yet — on first deploy the backend may not
+ * if the component isn't reachable yet; on first deploy the backend may not
  * exist, in which case the caller should deploy it first and retry.
  */
 function tryFetchUrls(componentName: string): DeploymentUrls | null {
@@ -149,43 +106,39 @@ function fetchUrls(componentName: string): DeploymentUrls {
 /**
  * Run the Convex storage upload flow
  */
-async function uploadToConvexStorage(
-  distDir: string,
-  componentName: string,
-  useCdn: boolean,
-  spaFallback: boolean,
-): Promise<boolean> {
+async function uploadToConvexStorage(args: DeployArgs): Promise<boolean> {
   console.log("");
   console.log(
-    useCdn
+    args.cdn
       ? "📦 Uploading static files (HTML to Convex, assets to CDN)..."
       : "📦 Uploading static files to Convex storage...",
   );
   console.log("");
 
-  const uploadArgs = [
-    "upload",
-    "--dist",
-    distDir,
-    "--component",
-    componentName,
-    "--prod",
-  ];
-
-  if (useCdn) {
-    uploadArgs.push("--cdn");
-  }
-  if (!spaFallback) {
-    uploadArgs.push("--no-spa");
-  }
-
-  const result = spawnStaticHostingCli(uploadArgs);
+  const result = spawnStaticHostingCli(buildDeployUploadArgs(args));
 
   return result === 0;
 }
 
+function runFrontendBuild(args: DeployArgs, urls: DeploymentUrls): void {
+  const environment = buildEnvironment(urls);
+  console.log(`   Build command: ${args.buildCommand}`);
+  console.log(`   VITE_CONVEX_URL=${environment.cloudUrl}`);
+  console.log(`   STATIC_HOSTING_BASE_PATH=${environment.basePath}`);
+  console.log("");
+
+  const buildResult = spawnShell(args.buildCommand, {
+    ...process.env,
+    VITE_CONVEX_URL: environment.cloudUrl,
+    STATIC_HOSTING_BASE_PATH: environment.basePath,
+  });
+  if (buildResult !== 0) {
+    throw new Error("Frontend build failed");
+  }
+}
+
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
+  const args = parseDeployArgs(process.argv.slice(2));
 
   if (args.help) {
     showHelp();
@@ -203,6 +156,8 @@ async function main(): Promise<void> {
   console.log("Step 1: Getting deployment URLs...");
 
   let urls = tryFetchUrls(args.component);
+  const shouldDeployBackend = !args.skipConvex;
+  let backendAlreadyDeployed = false;
 
   if (!urls && !args.skipConvex) {
     console.log(
@@ -219,7 +174,7 @@ async function main(): Promise<void> {
 
     // If the component isn't deployed yet, deploy the backend first so we
     // can ask it for the URLs.
-    if (!urls && !args.skipConvex) {
+    if (!urls && shouldDeployBackend) {
       console.log("   Deploying Convex backend first to get URLs...");
       console.log("");
 
@@ -234,7 +189,7 @@ async function main(): Promise<void> {
       urls = fetchUrls(args.component);
       console.log("");
       console.log(`   ✓ Site URL: ${urls.siteUrl}`);
-      args.skipConvex = true; // Already deployed
+      backendAlreadyDeployed = true;
     }
 
     if (!urls) {
@@ -244,20 +199,9 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
-    const basePath = new URL(urls.siteUrl).pathname || "/";
-
-    console.log(`   Build command: ${args.buildCommand}`);
-    console.log(`   VITE_CONVEX_URL=${urls.cloudUrl}`);
-    console.log(`   STATIC_HOSTING_BASE_PATH=${basePath}`);
-    console.log("");
-
-    const buildResult = spawnShell(args.buildCommand, {
-      ...process.env,
-      VITE_CONVEX_URL: urls.cloudUrl,
-      STATIC_HOSTING_BASE_PATH: basePath,
-    });
-
-    if (buildResult !== 0) {
+    try {
+      runFrontendBuild(args, urls);
+    } catch {
       console.error("");
       console.error("❌ Build failed");
       process.exit(1);
@@ -271,7 +215,7 @@ async function main(): Promise<void> {
   }
 
   // Step 3: Deploy Convex backend
-  if (!args.skipConvex) {
+  if (shouldDeployBackend && !backendAlreadyDeployed) {
     console.log("");
     console.log("Step 3: Deploying Convex backend...");
     console.log("");
@@ -286,6 +230,26 @@ async function main(): Promise<void> {
 
     console.log("");
     console.log("   ✓ Convex backend deployed");
+
+    const deployedUrls = fetchUrls(args.component);
+    if (!args.skipBuild) {
+      if (!urls || buildEnvironmentChanged(urls, deployedUrls)) {
+        console.log("");
+        console.log(
+          "   Static hosting URL changed after backend deployment. Rebuilding with the new environment...",
+        );
+        try {
+          runFrontendBuild(args, deployedUrls);
+        } catch {
+          console.error("");
+          console.error("❌ Rebuild failed after backend URL change");
+          process.exit(1);
+        }
+        console.log("");
+        console.log("   ✓ Rebuild complete");
+      }
+    }
+    urls = deployedUrls;
   } else {
     console.log("");
     console.log(
@@ -306,12 +270,10 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const staticDeploySuccess = await uploadToConvexStorage(
-    distDir,
-    args.component,
-    args.cdn,
-    args.spaFallback,
-  );
+  const staticDeploySuccess = await uploadToConvexStorage({
+    ...args,
+    dist: distDir,
+  });
 
   if (!staticDeploySuccess) {
     console.error("");

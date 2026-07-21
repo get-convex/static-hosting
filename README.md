@@ -2,23 +2,23 @@
 
 [![npm version](https://badge.fury.io/js/@convex-dev%2Fstatic-hosting.svg)](https://badge.fury.io/js/@convex-dev/static-hosting)
 
-A Convex component for hosting static React/Vite apps directly on Convex — no
+A Convex component for hosting static React/Vite apps directly on Convex: no
 separate hosting provider, no DNS to wire up, no second deploy target. Run one
 command and your frontend is live at `https://<deployment>.convex.site`
 alongside your backend.
 
 ## Features
 
-- 🚀 **One-command deploy** — build, push backend, and upload static files in a
+- 🚀 **One-command deploy:** build, push backend, and upload static files in a
   single step.
-- 🔄 **SPA routing** — paths without an extension fall back to `index.html`.
-- ⚡ **Smart caching** — hashed assets get long-term immutable caching; HTML
-  uses ETag revalidation so updates land instantly.
-- 🔔 **Live reload notifications** — connected clients can subscribe to a query
+- 🔄 **SPA routing:** paths without an extension fall back to `index.html`.
+- ⚡ **Smart caching:** hashed assets get long-term immutable caching; HTML uses
+  ETag revalidation so updates land instantly.
+- 🔔 **Live reload notifications:** connected clients can subscribe to a query
   that fires when a new version ships, with a drop-in `<UpdateBanner />`.
-- 🔒 **Authenticated uploads** — uploads go through the Convex CLI's
+- 🔒 **Authenticated uploads:** uploads go through the Convex CLI's
   authenticated session; there's no public upload endpoint.
-- 🧹 **Automatic cleanup** — files from previous 0.2.x deployments are garbage
+- 🧹 **Automatic cleanup:** files from previous 0.2.x deployments are garbage
   collected on every deploy. The migration guide covers one-time v1 cleanup.
 
 https://github.com/user-attachments/assets/5eaf781f-87da-4292-9f96-38070c86cd39
@@ -53,8 +53,10 @@ npm install convex@^1.37.0 @convex-dev/static-hosting
 npx @convex-dev/static-hosting setup
 ```
 
-The setup command adds the component to `convex/convex.config.ts` and creates a
-`deploy` script in `package.json`. Then:
+For a new setup, the command adds the component to `convex/convex.config.ts` and
+creates a `deploy` script in `package.json`. It does not overwrite an existing
+Convex config or `deploy` script. Complete any manual edits printed by the
+command, and confirm that `npm run deploy` invokes this package before running:
 
 ```bash
 npm run deploy
@@ -237,6 +239,7 @@ npx @convex-dev/static-hosting deploy [options]
       --no-spa              Disable SPA fallback (404 instead of /index.html)
       --spa                 Enable SPA fallback (default)
       --cdn                 Use the legacy convex-fs integration
+      --cdn-delete-function Legacy app function that deletes CDN blobs
 
 npx @convex-dev/static-hosting upload [options]
   -d, --dist <path>         Path to dist directory (default: ./dist)
@@ -251,22 +254,28 @@ npx @convex-dev/static-hosting upload [options]
   -j, --concurrency <n>     Parallel upload workers (default: 5)
 ```
 
-The CLI publishes the complete asset manifest, deployment settings, and old-file
-cleanup in one atomic Convex mutation, so new HTML cannot become visible before
-its referenced assets and a failed publish leaves the previous deployment live.
-New component files from a failed upload are removed automatically. It stops
-with a clear error if the serialized manifest exceeds 750 KiB; shorten asset
-paths or reduce the number of emitted files in that unusual case.
+The CLI stages the complete asset manifest in small, portable command-line
+chunks. One final Convex mutation atomically publishes the manifest and
+deployment settings, so new HTML cannot become visible before its referenced
+assets. Old storage is then removed in bounded cleanup transactions. A failed
+publish leaves the previous deployment live, and cleanup never deletes files
+referenced by it. Deployments are limited to 1,800 files and 2 MiB of serialized
+manifest metadata so the atomic switch remains below Convex transaction limits.
+Each later upload also removes component files and staging records abandoned by
+an interrupted upload once they are 24 hours old.
 
 Convex HTTP routes currently support GET but not HEAD. Configure uptime checks
 to make a lightweight GET request rather than a HEAD request.
 
 If you mount the component under a different name with
-`app.use(staticHosting, { name: "..." })`, pass it with `--component`.
+`app.use(staticHosting, { name: "custom" })`, pass `--component custom` and
+replace every generated `components.staticHosting` reference with
+`components.custom`.
 
 Do not use `--cdn` for a new integration. It targets an older ConvexFS HTTP API
-and is retained only for existing deployments. See `INTEGRATION.md` for the
-current limitation.
+and is retained only for existing deployments. Legacy CDN users must keep
+app-owned root routing because `/fs/upload` and `/fs/blobs/*` are root app
+routes. See `INTEGRATION.md` for the current limitation.
 
 ## Security
 
@@ -358,7 +367,7 @@ export default defineConfig({
 });
 ```
 
-Root-mounted apps don't need this — the default is `/`. For webpack use
+Root-mounted apps don't need this; the default is `/`. For webpack use
 `publicPath`, for Next.js `assetPrefix`.
 
 ## SPA routing
@@ -397,11 +406,11 @@ steps, verification, rollback, and the optional staged cutover.
 
 ## How it works
 
-1. **Build** — your bundler emits `dist/`.
-2. **Upload** — the CLI uses your authenticated Convex session to generate
-   signed upload URLs, push files to Convex storage, record metadata, and GC old
+1. **Build:** your bundler emits `dist/`.
+2. **Upload:** the CLI uses your authenticated Convex session to generate signed
+   upload URLs, push files to Convex storage, record metadata, and GC old
    deployments.
-3. **Serve** — an HTTP action looks up the requested path, streams the file with
+3. **Serve:** an HTTP action looks up the requested path, streams the file with
    the right `Content-Type`, applies long-term caching for hashed assets, and
    falls back to `index.html` for SPA routes.
 

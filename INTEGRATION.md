@@ -24,10 +24,15 @@ npx @convex-dev/static-hosting setup
 Convex 1.37.0 is the minimum supported version. The optional React helpers use
 `useQuery_experimental`, which is not exported by older Convex releases.
 
-The setup script:
+For a new app, the setup script:
 
 - Adds the component to `convex/convex.config.ts`
 - Adds a `deploy` script to `package.json`
+
+It preserves an existing `convex/convex.config.ts` or `deploy` script. Complete
+any manual edits it prints, and confirm the existing script invokes
+`@convex-dev/static-hosting deploy`. Otherwise run the package command directly
+or add a separate static-hosting deploy script.
 
 Then:
 
@@ -219,28 +224,34 @@ Do not use `--cdn` for a new integration. It targets an older, unauthenticated
 upload authentication, which this CLI does not yet provide.
 
 Existing deployments that already expose the legacy routes can keep using the
-flag during migration. Everyone else should use the default Convex storage mode.
-Supporting current ConvexFS properly needs a separate authenticated upload and
-garbage-collection design, not a copy-paste configuration snippet.
+flag during migration, but they must use app-owned root compatibility mode.
+`/fs/upload` and `/fs/blobs/*` are app routes, so component-owned root mode
+would break both upload and serving. Everyone else should use the default Convex
+storage mode. Supporting current ConvexFS properly needs a separate
+authenticated upload and garbage-collection design, not a copy-paste
+configuration snippet.
 
 The CLI uploads every file before atomically publishing the mixed storage/CDN
-manifest, deployment settings, and old-file cleanup. New HTML does not point at
-asset records that are still missing, and a failed publish leaves the previous
-deployment live. Newly uploaded component files are removed after a failed
-upload or publish. Failed legacy CDN uploads can only be cleaned automatically
-when `--cdn-delete-function` is configured.
+manifest and deployment settings while queuing exact old-file IDs for bounded
+follow-up cleanup. New HTML does not point at asset records that are still
+missing, and a failed publish leaves the previous deployment live. Failure
+cleanup removes new files only after it can prove publication did not win the
+transaction race; otherwise later maintenance recovers them. Failed legacy CDN
+uploads can only be cleaned automatically when `--cdn-delete-function` is
+configured. Old CDN IDs are kept in a private cleanup queue until that function
+succeeds, so a lost publish response does not make them unrecoverable.
 
 ## Non-Vite bundlers
 
 The `deploy` build step and `upload --build` set `VITE_CONVEX_URL`. To forward
 it to another env var (Expo, Next.js, etc.), wrap your build script:
 
-```json
-// Expo
-"build": "EXPO_PUBLIC_CONVEX_URL=${VITE_CONVEX_URL:-$EXPO_PUBLIC_CONVEX_URL} npx expo export --platform web"
+```text
+Expo build script:
+EXPO_PUBLIC_CONVEX_URL=${VITE_CONVEX_URL:-$EXPO_PUBLIC_CONVEX_URL} npx expo export --platform web
 
-// Next.js
-"build": "NEXT_PUBLIC_CONVEX_URL=${VITE_CONVEX_URL:-$NEXT_PUBLIC_CONVEX_URL} next build"
+Next.js build script:
+NEXT_PUBLIC_CONVEX_URL=${VITE_CONVEX_URL:-$NEXT_PUBLIC_CONVEX_URL} next build
 ```
 
 ## Security
@@ -268,6 +279,7 @@ npx @convex-dev/static-hosting deploy [options]
       --no-spa              Disable SPA fallback (404 instead of /index.html)
       --spa                 Enable SPA fallback (default)
       --cdn                 Upload non-HTML assets to convex-fs CDN
+      --cdn-delete-function App function path that deletes CDN blobs
 
 npx @convex-dev/static-hosting upload [options]
   -d, --dist <path>         Path to dist directory (default: ./dist)
@@ -282,11 +294,15 @@ npx @convex-dev/static-hosting upload [options]
   -j, --concurrency <n>     Parallel upload workers (default: 5)
 ```
 
-The complete manifest, deployment settings, and old-file cleanup are published
-atomically after all uploads finish. The CLI rejects manifests larger than 750
-KiB with an actionable error instead of running into an operating-system
-argument or Convex mutation limit, then removes the unreferenced component files
-uploaded by that failed attempt.
+The complete manifest is staged in small, portable command-line chunks after all
+uploads finish. One final mutation atomically publishes the manifest and
+deployment settings. Old component storage is removed immediately afterward in
+bounded cleanup transactions. A failed attempt leaves the previous deployment
+live and removes only new files that are not referenced by the live manifest.
+The supported maximum is 1,800 files and 2 MiB of serialized manifest metadata,
+which keeps the atomic switch below Convex transaction limits. Upload URLs are
+generated in bounded batches. Later uploads recover component files and staging
+records left unreferenced for more than 24 hours after an interrupted CLI.
 
 Convex HTTP routers currently expose GET but not HEAD routes. Uptime monitors
 must use a lightweight GET request.
@@ -311,7 +327,7 @@ export default defineConfig({
 });
 ```
 
-Root-mounted apps don't need this — the default is `/`. Webpack/Next.js
+Root-mounted apps don't need this; the default is `/`. Webpack/Next.js
 equivalents: `publicPath` and `assetPrefix`.
 
 ## SPA routing
@@ -359,10 +375,10 @@ has no `httpPrefix`.
 ### Wrong `VITE_CONVEX_URL` in the built bundle
 
 ```bash
-# Right — CLI sets VITE_CONVEX_URL for the target deployment
+# Right: CLI sets VITE_CONVEX_URL for the target deployment
 npx @convex-dev/static-hosting deploy
 
-# Wrong — uses VITE_CONVEX_URL from .env.local
+# Wrong: uses VITE_CONVEX_URL from .env.local
 npm run build && npx @convex-dev/static-hosting upload --prod
 ```
 
@@ -377,7 +393,8 @@ npm install @convex-dev/static-hosting
 ### Component name mismatch
 
 If you've renamed the component instance with
-`app.use(staticHosting, { name: "custom" })`, pass it to the CLI:
+`app.use(staticHosting, { name: "custom" })`, pass it to the CLI and replace
+every generated `components.staticHosting` reference with `components.custom`:
 
 ```bash
 npx @convex-dev/static-hosting upload --component custom
@@ -394,7 +411,7 @@ app routes must remain at the same root. `pathPrefix`, `spaFallback`, and
 
 ### `exposeDeploymentQuery(component)`
 
-Returns `{ getCurrentDeployment }` — a public query that wraps the component's
+Returns `{ getCurrentDeployment }`: a public query that wraps the component's
 deployment singleton. Add this only if you use `<UpdateBanner />` or
 `useDeploymentUpdates`.
 
@@ -407,5 +424,5 @@ served from `<deployment>.convex.site`.
 
 - [README.md](./README.md)
 - [0.1.x to 0.2.x migration guide](./MIGRATION.md)
-- [`example/`](./example) — Working example app
+- [`example/`](./example): Working example app
 - [Component source](./src/component)

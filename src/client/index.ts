@@ -196,7 +196,19 @@ export function exposeDeploymentQuery(component: ComponentApi) {
       args: {},
       returns: v.union(deploymentInfoValidator, v.null()),
       handler: async (ctx) => {
-        return await ctx.runQuery(component.lib.getCurrentDeployment, {});
+        const deployment = await ctx.runQuery(
+          component.lib.getCurrentDeployment,
+          {},
+        );
+        if (!deployment) return null;
+        // Cleanup accounting is private component state. Returning it through
+        // this public wrapper would fail the narrower response validator.
+        const deploymentWithCleanup = deployment as typeof deployment & {
+          pendingBlobCleanupCount?: number;
+        };
+        const { pendingBlobCleanupCount: _pending, ...publicDeployment } =
+          deploymentWithCleanup;
+        return publicDeployment;
       },
     }),
   };

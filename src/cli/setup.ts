@@ -25,15 +25,26 @@ function findHttpFile(): string | null {
   return null;
 }
 
-function createConvexConfig(): boolean {
+interface ConfigSetupResult {
+  needsStaticRoutes: boolean;
+  requiresManualConfig: boolean;
+}
+
+function createConvexConfig(): ConfigSetupResult {
   const configPath = join(process.cwd(), "convex", "convex.config.ts");
   const httpPath = findHttpFile();
 
   if (existsSync(configPath)) {
     const existing = readFileSync(configPath, "utf-8");
     if (existing.includes("@convex-dev/static-hosting")) {
-      skip("convex/convex.config.ts (already configured)");
-      return false;
+      skip("convex/convex.config.ts (already imports static hosting)");
+      console.log(
+        "⚠️  Verify that the component has either an httpPrefix mount or a matching registerStaticRoutes call in convex/http.ts.",
+      );
+      console.log(
+        "   Also note any custom app.use(..., { name }) value for the --component flag.\n",
+      );
+      return { needsStaticRoutes: false, requiresManualConfig: true };
     }
     console.log("\n⚠️  convex/convex.config.ts exists. Add manually:");
     console.log(
@@ -43,10 +54,10 @@ function createConvexConfig(): boolean {
       console.log(
         "   app.use(staticHosting); // keep app HTTP routes at root\n",
       );
-      return true;
+      return { needsStaticRoutes: true, requiresManualConfig: true };
     }
     console.log('   app.use(staticHosting, { httpPrefix: "/" });\n');
-    return false;
+    return { needsStaticRoutes: false, requiresManualConfig: true };
   }
 
   const config = httpPath
@@ -72,14 +83,17 @@ export default app;
 
   writeFileSync(configPath, config);
   success("Created convex/convex.config.ts");
-  return httpPath !== null;
+  return {
+    needsStaticRoutes: httpPath !== null,
+    requiresManualConfig: false,
+  };
 }
 
-function updatePackageJson(): void {
+function updatePackageJson(): boolean {
   const pkgPath = join(process.cwd(), "package.json");
   if (!existsSync(pkgPath)) {
     console.log("⚠️  No package.json found");
-    return;
+    return false;
   }
 
   const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
@@ -87,12 +101,16 @@ function updatePackageJson(): void {
 
   if (pkg.scripts.deploy) {
     skip("package.json deploy script (already exists)");
-    return;
+    return (
+      typeof pkg.scripts.deploy === "string" &&
+      pkg.scripts.deploy.includes("@convex-dev/static-hosting")
+    );
   }
 
   pkg.scripts.deploy = "npx @convex-dev/static-hosting deploy";
   writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
   success("Added deploy script to package.json");
+  return true;
 }
 
 function main(): void {
@@ -103,8 +121,8 @@ function main(): void {
     success("Created convex/ directory");
   }
 
-  const needsStaticRoutes = createConvexConfig();
-  updatePackageJson();
+  const { needsStaticRoutes, requiresManualConfig } = createConvexConfig();
+  const hasStaticDeployScript = updatePackageJson();
 
   console.log("\n✨ Setup complete!\n");
   if (needsStaticRoutes) {
@@ -117,9 +135,18 @@ function main(): void {
     console.log('   import { components } from "./_generated/api";');
     console.log("   registerStaticRoutes(http, components.staticHosting);\n");
   }
+  if (requiresManualConfig) {
+    console.log(
+      "Before deploying, complete the configuration and routing checks printed above.\n",
+    );
+  }
   console.log("Next steps:\n");
   console.log("  1. npx convex dev          # Generate types");
-  console.log("  2. npm run deploy          # Build and deploy\n");
+  console.log(
+    hasStaticDeployScript
+      ? "  2. npm run deploy          # Build and deploy\n"
+      : "  2. npx @convex-dev/static-hosting deploy  # Build and deploy\n",
+  );
   console.log("Your app will be at: https://<deployment>.convex.site\n");
   console.log(
     "Optional: to use <UpdateBanner /> from @convex-dev/static-hosting/react,",
@@ -134,6 +161,9 @@ function main(): void {
   );
   console.log("     components.staticHosting,");
   console.log("   );\n");
+  console.log(
+    "If app.use uses a custom name, replace components.staticHosting with that generated property.\n",
+  );
 }
 
 main();

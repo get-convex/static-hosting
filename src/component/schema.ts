@@ -10,7 +10,42 @@ export default defineSchema({
     deploymentId: v.string(), // UUID for garbage collection
   })
     .index("by_path", ["path"])
-    .index("by_deploymentId", ["deploymentId"]),
+    .index("by_deploymentId", ["deploymentId"])
+    .index("by_storageId", ["storageId"]),
+
+  // Uploads stage their manifest in small chunks because the Convex CLI takes
+  // function arguments on the command line. Only publishDeployment copies a
+  // complete staged manifest into staticAssets, so partial uploads are never
+  // visible to HTTP requests.
+  stagedAssets: defineTable({
+    path: v.string(),
+    storageId: v.optional(v.id("_storage")),
+    blobId: v.optional(v.string()),
+    contentType: v.string(),
+    deploymentId: v.string(),
+  })
+    .index("by_deploymentId", ["deploymentId"])
+    .index("by_storageId", ["storageId"]),
+
+  // Old ConvexFS blobs are app-owned, so the component cannot delete them.
+  // Persist the IDs until the CLI's app-level delete function succeeds. This
+  // also makes cleanup recoverable when a publish response is lost.
+  pendingBlobCleanup: defineTable({
+    blobId: v.string(),
+  }).index("by_blobId", ["blobId"]),
+
+  // Storage IDs from the previous live manifest are queued by the atomic
+  // publish, then deleted in bounded follow-up mutations. This avoids both a
+  // large publish transaction and races with unrelated concurrent uploads.
+  pendingStorageCleanup: defineTable({
+    storageId: v.id("_storage"),
+  }).index("by_storageId", ["storageId"]),
+
+  // Cleanup may be queued before the first successful deployment exists, so
+  // its count cannot live only on deploymentInfo.
+  cleanupState: defineTable({
+    pendingBlobCleanupCount: v.number(),
+  }),
 
   // Singleton table to track the current deployment
   // Clients subscribe to this to know when to reload
@@ -21,5 +56,6 @@ export default defineSchema({
     // (`--no-spa` turns it off). Absent means enabled. Travels with the
     // deploy so the serving behavior matches the code that was shipped.
     spaFallback: v.optional(v.boolean()),
+    pendingBlobCleanupCount: v.optional(v.number()),
   }),
 });

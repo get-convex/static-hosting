@@ -20,11 +20,24 @@ It is not a package-only upgrade.
 - **You must choose who owns the root HTTP routes.** The recommended 0.2.x mode
   mounts the component at `/` and moves app-owned HTTP routes under `/api`.
   Compatibility mode keeps existing auth, webhook, and API URLs at the root.
+- **Legacy `--cdn` users must keep app-owned root routes.** Both `/fs/upload`
+  and `/fs/blobs/*` belong to the app router. Component-owned root mode moves
+  that router below `/api` and breaks legacy ConvexFS uploads and asset URLs.
 - **Remove `exposeUploadApi`.** The CLI now calls private component functions
   directly; app-level upload wrappers no longer exist.
 - **Plan the production cutover.** A normal in-place upgrade can briefly show
   the setup page between the backend deployment and the first 0.2.x upload. If
   that is unacceptable, use the [staged cutover](#staged-cutover) below.
+- **Check the built manifest.** 0.2.x accepts at most 1,800 files and 2 MiB of
+  serialized manifest metadata per deployment so the atomic switch remains below
+  Convex transaction limits. Reduce highly fragmented output or shorten deeply
+  nested asset paths before starting the production cutover.
+- **Check same-name migration size.** When v2 inherits the v1 component data,
+  the old and new manifests must contain no more than 3,800 rows combined. The
+  publication rejects atomically without partially replacing the inherited
+  manifest when that read budget is exceeded. In the standard in-place path,
+  traffic has already switched to v2 and can remain on the setup page. Shrink
+  the manifests before the backend cutover or use the staged two-instance path.
 
 ## Instructions for coding agents
 
@@ -77,9 +90,11 @@ available. Only `exposeUploadApi` was removed from the client API.
 4. Check whether the component has a custom instance name. In 0.1.x the
    generated reference was normally `components.selfHosting`; in 0.2.x the
    default is `components.staticHosting`.
-5. Make sure the current production deployment and static upload are healthy so
+5. Check whether uploads use the legacy `--cdn` flag. If they do, preserve the
+   root `/fs/upload` and `/fs/blobs/*` routes and choose Option B below.
+6. Make sure the current production deployment and static upload are healthy so
    you have a known rollback point.
-6. While the 0.1.x facade is still deployed, capture its current asset list and
+7. While the 0.1.x facade is still deployed, capture its current asset list and
    a paginated app-storage inventory as described in
    [Clean up 0.1.x app-storage blobs](#clean-up-01x-app-storage-blobs). Store
    the output outside the repository.
@@ -110,6 +125,10 @@ published 0.2.x package.
 Use this when app-owned HTTP endpoints can move from `/route` to `/api/route`,
 or when the app has no other HTTP endpoints. The component serves files from its
 storage directly, so this is the fastest mode.
+
+Do not use this option with the legacy `--cdn` flag. Its `/fs/upload` and
+`/fs/blobs/*` routes must remain on the app-owned root router. Choose Option B
+until the deployment no longer uses ConvexFS.
 
 Replace the old component registration with:
 
@@ -210,7 +229,11 @@ export const { getCurrentDeployment } = exposeDeploymentQuery(
 ```
 
 If the app does not use deployment notifications, delete
-`convex/staticHosting.ts` entirely.
+`convex/staticHosting.ts` entirely **unless it also contains the app action used
+by legacy `--cdn` cleanup**. Legacy CDN users must keep that action, remove only
+the old upload facade, and continue passing its function path with
+`--cdn-delete-function`. Otherwise the old blob IDs leave the live manifest
+without being deleted.
 
 Existing explicit `getCurrentDeployment` props still work. In 0.2.x the React
 helpers also default to `api.staticHosting.getCurrentDeployment` when the query
@@ -224,6 +247,18 @@ The recommended production script is:
 {
   "scripts": {
     "deploy": "npx @convex-dev/static-hosting deploy"
+  }
+}
+```
+
+An existing legacy CDN deployment must preserve both flags and its app-level
+delete action. For example, if that action is exported as
+`staticHosting:deleteCdnBlobs`:
+
+```json
+{
+  "scripts": {
+    "deploy": "npx @convex-dev/static-hosting deploy --cdn --cdn-delete-function staticHosting:deleteCdnBlobs"
   }
 }
 ```
@@ -249,6 +284,10 @@ storage, so 0.2.x treats them as unavailable and serves the HTTP 503 setup page
 until the first v2 upload atomically replaces the manifest. The upload cleanup
 skips those foreign IDs; it does not delete the v1 app-storage blobs.
 
+The commands below show the default v2 instance name, `staticHosting`. Replace
+it with the exact chosen v2 name, such as `selfHosting` or `staticHostingV2`, in
+every `--component` flag and generated `components.*` reference.
+
 ### 5. Regenerate and test on a development deployment
 
 Push the new component definition and regenerate `components.*` references:
@@ -264,7 +303,7 @@ keeps the rest of the generated API consistent.
 Then build and repopulate the new component storage:
 
 ```bash
-npx @convex-dev/static-hosting upload --build
+npx @convex-dev/static-hosting upload --build --component staticHosting
 ```
 
 Between these two commands, a root request may show the static-hosting setup
@@ -304,8 +343,17 @@ Test all of the following on the development `*.convex.site` URL:
 After the development smoke test passes:
 
 ```bash
-npx @convex-dev/static-hosting deploy
+npx @convex-dev/static-hosting deploy --component staticHosting
 ```
+
+If this standard migration removes or renames the old `selfHosting` component,
+Convex may ask for confirmation before deleting its component records. Do not
+approve that prompt blindly. Confirming deletion removes the v1 manifest, so a
+rollback must reconstruct it from the captured app-storage inventory or run a
+full v1 upload. If you require a backend-only rollback, stop here and use the
+[staged cutover](#staged-cutover), which keeps the legacy component mounted
+through the rollback window. Rehearse and explicitly handle this confirmation in
+CI.
 
 This builds with the production Convex URL, deploys the backend, and uploads the
 files into the 0.2.x component storage. Do not use a separately built `dist/`
@@ -334,6 +382,21 @@ left seven static-hosting blobs in app storage while `listAssets` reported only
 the four current files. The older CSS, SVG, and HTML blobs were invisible to the
 manifest. Treat the manifest as the rollback set and a lower bound for cleanup,
 not as a complete app-storage inventory.
+
+Legacy ConvexFS CDN blobs need a separate cleanup path. The v2 private cleanup
+queue automatically inherits v1 CDN IDs only when v2 reuses the same component
+instance name and data. If v1 and v2 use different names, including the staged
+two-instance cutover, invoke the retained app delete action explicitly with the
+captured v1 `blobId` values after the rollback window closes. For example:
+
+```bash
+npx convex run staticHosting:deleteCdnBlobs \
+  '{"blobIds":["<captured-v1-blob-id>"]}' --prod
+```
+
+Review the exact list and get deletion approval first. Historical ConvexFS
+orphans absent from the v1 manifest cannot be inferred by v2. Inventory them
+through the legacy storage integration before claiming CDN cleanup is complete.
 
 ### Capture the current v1 manifest
 
@@ -501,11 +564,34 @@ import staticHosting from "@convex-dev/static-hosting/convex.config.js";
 import staticHostingLegacy from "static-hosting-legacy/convex.config.js";
 
 const app = defineApp();
-app.use(staticHostingLegacy); // components.selfHosting
+app.use(staticHostingLegacy, { name: "selfHosting" });
 app.use(staticHosting, { httpPrefix: "/__static_v2/" });
 
 export default app;
 ```
+
+`selfHosting` above must be the exact v1 instance name captured before the
+migration. If the app used a custom name, pass that custom name to `app.use` and
+replace every `components.selfHosting` reference in the following examples with
+the matching generated property. Do not mount a fresh default legacy component,
+because that leaves the real v1 manifest behind and breaks the promised
+backend-only rollback.
+
+If the v1 instance was already named `staticHosting`, give v2 a different name
+for the whole migration. Two mounted components cannot share an instance name,
+and renaming v2 at cutover would create a fresh component with empty storage:
+
+```ts
+app.use(staticHostingLegacy, { name: "staticHosting" });
+app.use(staticHosting, {
+  name: "staticHostingV2",
+  httpPrefix: "/__static_v2/",
+});
+```
+
+In that case use `components.staticHostingV2` for v2 integrations and pass
+`--component staticHostingV2` to every v2 upload or deploy command. Keep that v2
+name through cutover and rollback.
 
 Keep the 0.1.x root catch-all and upload facade importing from the alias until
 cutover:
@@ -520,7 +606,7 @@ registerStaticRoutes(http, components.selfHosting);
 ```
 
 ```ts
-// convex/staticHosting.ts — only while 0.1.x is live
+// convex/staticHosting.ts: only while 0.1.x is live
 import { exposeDeploymentQuery, exposeUploadApi } from "static-hosting-legacy";
 import { components } from "./_generated/api";
 
@@ -554,6 +640,9 @@ npx @convex-dev/static-hosting upload --build --prod \
   --build-command "npm run build -- --base=/"
 ```
 
+Add `--component staticHostingV2` here when using the collision-safe v2 name
+described above.
+
 The CLI still supplies the production `VITE_CONVEX_URL`. The explicit Vite base
 overrides the temporary `/__static_v2/` mount for this build.
 
@@ -566,16 +655,22 @@ development deployment for the full smoke test.
 
 Choose the same final routing mode described in the standard migration:
 
-- **Component-owned root:** remove the legacy component and
-  `registerStaticRoutes`, change to `defineApp({ httpPrefix: "/api" })`, and
-  mount 0.2.x with `{ httpPrefix: "/" }`.
-- **Keep existing root routes:** remove the legacy component, mount 0.2.x with
-  no `httpPrefix`, and change `registerStaticRoutes` to import from
-  `@convex-dev/static-hosting` and use `components.staticHosting`.
+- **Component-owned root:** keep the legacy component mounted without its static
+  catch-all, change to `defineApp({ httpPrefix: "/api" })`, and mount 0.2.x with
+  `{ httpPrefix: "/" }`. The old component remains data-only during the rollback
+  window.
+- **Keep existing root routes:** keep both components mounted with no
+  `httpPrefix`, and change `registerStaticRoutes` to import from
+  `@convex-dev/static-hosting` and use `components.staticHosting`. The legacy
+  component again remains mounted only to preserve its rollback data.
+
+For a v1 instance named `staticHosting`, keep using `components.staticHostingV2`
+in the second option. Do not rename the populated v2 instance during cutover.
 
 Also remove the legacy `exposeUploadApi` exports. Keep an
-`exposeDeploymentQuery(components.staticHosting)` export only if the app uses
-deployment notifications.
+`exposeDeploymentQuery` export only if the app uses deployment notifications,
+and point it at the selected v2 instance: `components.staticHosting`, or
+`components.staticHostingV2` in the collision-safe case.
 
 Then switch traffic without rebuilding or uploading:
 
@@ -583,21 +678,22 @@ Then switch traffic without rebuilding or uploading:
 npx convex deploy
 ```
 
-Removing the legacy component may make Convex ask you to confirm component data
-deletion. Review that prompt rather than bypassing it blindly. For CI-driven
-deploys, rehearse this final step on a development deployment and make the
-confirmation behavior explicit in the release job.
-
 The 0.2.x component already contains the final-path assets, so the new route
-owner can serve them immediately. After verification, remove the alias:
+owner can serve them immediately. Keep the legacy package alias, its component
+mount, and the captured 0.1.x app-storage IDs until the rollback window closes.
+That keeps rollback to a backend-only route change.
+
+After the rollback window closes, remove the legacy `app.use(...)`, deploy the
+backend, and review any Convex prompt confirming deletion of the legacy
+component data. Then uninstall the alias:
 
 ```bash
 npm uninstall static-hosting-legacy
 ```
 
-Keep the alias until the rollback window closes if you want the option to
-restore the old mount with a backend-only deploy. Keep the captured 0.1.x
-app-storage IDs for the same period, then follow
+For CI-driven deploys, rehearse the component-removal step on a development
+deployment and make the confirmation behavior explicit in the release job.
+Finally follow
 [Clean up 0.1.x app-storage blobs](#clean-up-01x-app-storage-blobs).
 
 ## Troubleshooting
@@ -653,8 +749,26 @@ records by itself. If the blobs have already been cleaned up, a full 0.1.x
 upload is required.
 
 For a staged cutover, leave the aliased 0.1.4 component in place until the
-rollback window closes. Restoring its app-owned root catch-all and component
-mount is then a backend-only rollback.
+rollback window closes. In app-owned compatibility mode, change
+`registerStaticRoutes` back to the alias and `components.selfHosting`.
+
+In component-owned root mode, also restore `defineApp()` without the `/api`
+prefix and move v2 away from the root before restoring the legacy catch-all:
+
+```ts
+const app = defineApp();
+app.use(staticHostingLegacy, { name: "selfHosting" });
+app.use(staticHosting, { httpPrefix: "/__static_v2/" });
+```
+
+Use the captured custom v1 name here too when it was not `selfHosting`. If the
+v1 name is `staticHosting`, use `staticHostingV2` as the v2 component name here,
+matching the collision-safe mount used during preload.
+
+That restores the pre-cutover route ownership while retaining both component
+mounts. The rollback is backend-only because the v1 component and its manifest
+never went away. Do not confirm deletion of the legacy component data before the
+rollback window closes.
 
 Do not run the legacy app-storage cleanup until the rollback window has closed
 and the user has approved making the v1 asset set unrecoverable without another

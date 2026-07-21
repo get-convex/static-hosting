@@ -5,7 +5,7 @@ import {
   httpRouter,
 } from "convex/server";
 import type { ComponentApi } from "../component/_generated/component.js";
-import { registerStaticRoutes } from "./index.js";
+import { exposeDeploymentQuery, registerStaticRoutes } from "./index.js";
 
 const components = componentsGeneric() as unknown as {
   staticHosting: ComponentApi;
@@ -16,6 +16,13 @@ type TestHttpAction = {
     ctx: { runQuery: ReturnType<typeof vi.fn> },
     request: Request,
   ) => Promise<Response>;
+};
+
+type TestQuery = {
+  _handler: (
+    ctx: { runQuery: ReturnType<typeof vi.fn> },
+    args: Record<string, never>,
+  ) => Promise<unknown>;
 };
 
 function invokeHandler(
@@ -214,5 +221,33 @@ describe("registerStaticRoutes", () => {
     expect(response.headers.get("Location")).toBe(
       "https://cdn.example/blobs/blob-1",
     );
+  });
+});
+
+describe("exposeDeploymentQuery", () => {
+  test("strips private cleanup accounting from the public result", async () => {
+    const { getCurrentDeployment } = exposeDeploymentQuery(
+      components.staticHosting,
+    );
+    const runQuery = vi.fn().mockResolvedValue({
+      _id: "deployment-info-id",
+      _creationTime: 1,
+      currentDeploymentId: "deploy-1",
+      deployedAt: 2,
+      spaFallback: true,
+      pendingBlobCleanupCount: 4,
+    });
+
+    const result = await (
+      getCurrentDeployment as unknown as TestQuery
+    )._handler({ runQuery }, {});
+
+    expect(result).toEqual({
+      _id: "deployment-info-id",
+      _creationTime: 1,
+      currentDeploymentId: "deploy-1",
+      deployedAt: 2,
+      spaFallback: true,
+    });
   });
 });

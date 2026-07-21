@@ -25,7 +25,18 @@ const deploymentInfoValidator = v.object({
   currentDeploymentId: v.string(),
   deployedAt: v.number(),
   spaFallback: v.optional(v.boolean()),
+  pendingBlobCleanupCount: v.optional(v.number()),
 });
+
+const MAX_ASSETS_PER_DEPLOYMENT = 1800;
+const MAX_PUBLISH_MANIFEST_READS = 3800;
+const MAX_PUBLISH_DOCUMENT_WRITES = 15500;
+const MAX_MANIFEST_SERIALIZED_BYTES = 2 * 1024 * 1024;
+const MAINTENANCE_PAGE_LIMIT = 256;
+// The live manifest plus this scan is at most 3,800 documents. Remaining
+// staged lookups use an explicit budget below Convex's 4,096 read limit.
+const STORAGE_SCAN_LIMIT = 2000;
+const ABANDONED_UPLOAD_AGE_MS = 24 * 60 * 60 * 1000;
 
 const httpAssetValidator = v.object({
   storageUrl: v.optional(v.string()),
@@ -69,11 +80,39 @@ async function deleteStorageFile(ctx: MutationCtx, storageId: Id<"_storage">) {
   return true;
 }
 
+async function adjustPendingBlobCleanupCount(
+  ctx: MutationCtx,
+  delta: number,
+): Promise<number> {
+  const state = await ctx.db.query("cleanupState").first();
+  if (state) {
+    const next = Math.max(0, state.pendingBlobCleanupCount + delta);
+    await ctx.db.patch("cleanupState", state._id, {
+      pendingBlobCleanupCount: next,
+    });
+    return next;
+  }
+
+  // Seed upgrades from the old denormalized field when present. On a fresh
+  // install this also works before deploymentInfo exists.
+  const info = await ctx.db.query("deploymentInfo").first();
+  const next = Math.max(0, (info?.pendingBlobCleanupCount ?? 0) + delta);
+  await ctx.db.insert("cleanupState", { pendingBlobCleanupCount: next });
+  return next;
+}
+
 export const getCurrentDeployment = query({
   args: {},
   returns: v.union(deploymentInfoValidator, v.null()),
   handler: async (ctx) => {
-    return await ctx.db.query("deploymentInfo").first();
+    const info = await ctx.db.query("deploymentInfo").first();
+    if (!info) return null;
+    const state = await ctx.db.query("cleanupState").first();
+    return {
+      ...info,
+      pendingBlobCleanupCount:
+        state?.pendingBlobCleanupCount ?? info.pendingBlobCleanupCount,
+    };
   },
 });
 
@@ -139,8 +178,8 @@ export const getByPath = internalQuery({
 });
 
 // Resolves the asset the HTTP handler should serve for a request path: the
-// exact match, or — when SPA fallback is enabled for the current deployment
-// and the path looks like a client-side route (no file extension) — the
+// exact match, or, when SPA fallback is enabled for the current deployment
+// and the path looks like a client-side route (no file extension), the
 // index.html asset. Doing the fallback here keeps it to a single query.
 export const resolveAsset = internalQuery({
   args: { path: v.string() },
@@ -173,6 +212,9 @@ export const generateUploadUrls = internalMutation({
   args: { count: v.number() },
   returns: v.array(v.string()),
   handler: async (ctx, { count }) => {
+    if (!Number.isInteger(count) || count < 1 || count > 100) {
+      throw new Error("Upload URL batch size must be an integer from 1 to 100");
+    }
     const urls: string[] = [];
     for (let i = 0; i < count; i++) {
       urls.push(await ctx.storage.generateUploadUrl());
@@ -181,20 +223,134 @@ export const generateUploadUrls = internalMutation({
   },
 });
 
+export const listPendingBlobCleanup = internalQuery({
+  args: { limit: v.optional(v.number()) },
+  returns: v.array(v.string()),
+  handler: async (ctx, { limit }) => {
+    return (
+      await ctx.db.query("pendingBlobCleanup").take(Math.min(limit ?? 250, 500))
+    ).map((entry) => entry.blobId);
+  },
+});
+
+export const acknowledgeBlobCleanup = internalMutation({
+  args: { blobIds: v.array(v.string()) },
+  returns: v.object({ acknowledged: v.number() }),
+  handler: async (ctx, { blobIds }) => {
+    let acknowledged = 0;
+    for (const blobId of new Set(blobIds)) {
+      const entries = await ctx.db
+        .query("pendingBlobCleanup")
+        .withIndex("by_blobId", (q) => q.eq("blobId", blobId))
+        .collect();
+      for (const entry of entries) {
+        await ctx.db.delete("pendingBlobCleanup", entry._id);
+        acknowledged++;
+      }
+    }
+
+    if (acknowledged > 0) {
+      await adjustPendingBlobCleanupCount(ctx, -acknowledged);
+    }
+    return { acknowledged };
+  },
+});
+
+export const queueBlobCleanup = internalMutation({
+  args: { blobIds: v.array(v.string()) },
+  returns: v.object({ queued: v.number() }),
+  handler: async (ctx, { blobIds }) => {
+    let queued = 0;
+    for (const blobId of new Set(blobIds)) {
+      const existing = await ctx.db
+        .query("pendingBlobCleanup")
+        .withIndex("by_blobId", (q) => q.eq("blobId", blobId))
+        .first();
+      if (existing) continue;
+      await ctx.db.insert("pendingBlobCleanup", { blobId });
+      queued++;
+    }
+
+    if (queued > 0) await adjustPendingBlobCleanupCount(ctx, queued);
+    return { queued };
+  },
+});
+
+export const cleanupPendingStorage = internalMutation({
+  args: { limit: v.optional(v.number()) },
+  returns: v.object({
+    processed: v.number(),
+    deleted: v.number(),
+    needsAnotherPass: v.boolean(),
+  }),
+  handler: async (ctx, { limit }) => {
+    const batchLimit = Math.min(
+      limit ?? MAINTENANCE_PAGE_LIMIT,
+      MAINTENANCE_PAGE_LIMIT,
+    );
+    const entries = await ctx.db
+      .query("pendingStorageCleanup")
+      .take(batchLimit);
+    let deleted = 0;
+    for (const entry of entries) {
+      const [liveReference, stagedReference] = await Promise.all([
+        ctx.db
+          .query("staticAssets")
+          .withIndex("by_storageId", (q) => q.eq("storageId", entry.storageId))
+          .first(),
+        ctx.db
+          .query("stagedAssets")
+          .withIndex("by_storageId", (q) => q.eq("storageId", entry.storageId))
+          .first(),
+      ]);
+      if (
+        !liveReference &&
+        !stagedReference &&
+        (await deleteStorageFile(ctx, entry.storageId))
+      ) {
+        deleted++;
+      }
+      await ctx.db.delete("pendingStorageCleanup", entry._id);
+    }
+    return {
+      processed: entries.length,
+      deleted,
+      needsAnotherPass: entries.length === batchLimit,
+    };
+  },
+});
+
 export const deleteUploadedFiles = internalMutation({
   args: { storageIds: v.array(v.id("_storage")) },
-  returns: v.object({ deleted: v.number(), alreadyMissing: v.number() }),
+  returns: v.object({
+    deleted: v.number(),
+    alreadyMissing: v.number(),
+    stillReferenced: v.number(),
+  }),
   handler: async (ctx, { storageIds }) => {
+    // A publish can commit even if the CLI loses its response. Never delete a
+    // file that the live manifest now references during failure cleanup.
+    const liveAssets = await ctx.db.query("staticAssets").collect();
+    const referencedStorageIds = new Set(
+      liveAssets.flatMap((asset) =>
+        asset.storageId === undefined ? [] : [asset.storageId],
+      ),
+    );
     let deleted = 0;
     let alreadyMissing = 0;
+    let stillReferenced = 0;
     for (const storageId of storageIds) {
+      if (referencedStorageIds.has(storageId)) {
+        stillReferenced++;
+        continue;
+      }
       if (await deleteStorageFile(ctx, storageId)) {
         deleted++;
       } else {
         alreadyMissing++;
       }
     }
-    return { deleted, alreadyMissing };
+    return { deleted, alreadyMissing, stillReferenced };
   },
 });
 
@@ -230,7 +386,17 @@ function assertAssetManifest(
     deploymentId: string;
   }>,
   deploymentId?: string,
+  requireIndex = false,
 ) {
+  if (requireIndex && assets.length === 0) {
+    throw new Error("A static asset manifest cannot be empty");
+  }
+  if (requireIndex && assets.length > MAX_ASSETS_PER_DEPLOYMENT) {
+    throw new Error(
+      `A static asset manifest can contain at most ${MAX_ASSETS_PER_DEPLOYMENT} files`,
+    );
+  }
+
   const paths = new Set<string>();
   for (const asset of assets) {
     assertAssetLocation(asset);
@@ -242,12 +408,181 @@ function assertAssetManifest(
     }
     paths.add(asset.path);
   }
+
+  if (requireIndex && !paths.has("/index.html")) {
+    throw new Error("A static asset manifest must include /index.html");
+  }
 }
+
+export const stageAssets = internalMutation({
+  args: { assets: v.array(v.object(recordAssetFields)) },
+  returns: v.object({ staged: v.number() }),
+  handler: async (ctx, { assets }) => {
+    if (assets.length === 0) {
+      throw new Error("Cannot stage an empty asset chunk");
+    }
+
+    // Validate locations and deployment IDs within this chunk now. Duplicate
+    // paths across chunks are checked again when the full manifest publishes.
+    const deploymentId = assets[0].deploymentId;
+    for (const asset of assets) {
+      assertAssetLocation(asset);
+      if (asset.deploymentId !== deploymentId) {
+        throw new Error("A staged asset chunk must use one deploymentId");
+      }
+      // Validate component-storage IDs while the manifest is still split into
+      // small CLI chunks. Doing this for the complete manifest during publish
+      // would exceed Convex's index-range-read limit on large deployments.
+      if (
+        asset.storageId &&
+        (await ctx.db.system.get("_storage", asset.storageId)) === null
+      ) {
+        throw new Error(`Staged storage file is missing for ${asset.path}`);
+      }
+      await ctx.db.insert("stagedAssets", asset);
+    }
+    return { staged: assets.length };
+  },
+});
+
+export const discardStagedDeployment = internalMutation({
+  args: { deploymentId: v.string() },
+  returns: v.object({ discarded: v.number() }),
+  handler: async (ctx, { deploymentId }) => {
+    const assets = await ctx.db
+      .query("stagedAssets")
+      .withIndex("by_deploymentId", (q) => q.eq("deploymentId", deploymentId))
+      .collect();
+    for (const asset of assets) {
+      await ctx.db.delete("stagedAssets", asset._id);
+    }
+    return { discarded: assets.length };
+  },
+});
+
+export const cleanupAbandonedStaging = internalMutation({
+  args: {
+    before: v.optional(v.number()),
+    limit: v.optional(v.number()),
+  },
+  returns: v.object({
+    discarded: v.number(),
+    deletedFiles: v.number(),
+    queuedBlobIds: v.number(),
+  }),
+  handler: async (ctx, { before, limit }) => {
+    const cutoff = before ?? Date.now() - ABANDONED_UPLOAD_AGE_MS;
+    const candidates = await ctx.db
+      .query("stagedAssets")
+      .order("asc")
+      .take(Math.min(limit ?? MAINTENANCE_PAGE_LIMIT, MAINTENANCE_PAGE_LIMIT));
+    const assets = candidates.filter((asset) => asset._creationTime < cutoff);
+    let deletedFiles = 0;
+    let queuedBlobIds = 0;
+    for (const asset of assets) {
+      if (asset.storageId) {
+        const liveReference = await ctx.db
+          .query("staticAssets")
+          .withIndex("by_storageId", (q) => q.eq("storageId", asset.storageId))
+          .first();
+        if (!liveReference && (await deleteStorageFile(ctx, asset.storageId))) {
+          deletedFiles++;
+        }
+      }
+      if (asset.blobId) {
+        await ctx.db.insert("pendingBlobCleanup", { blobId: asset.blobId });
+        queuedBlobIds++;
+      }
+      await ctx.db.delete("stagedAssets", asset._id);
+    }
+
+    if (queuedBlobIds > 0) {
+      await adjustPendingBlobCleanupCount(ctx, queuedBlobIds);
+    }
+    return {
+      discarded: assets.length,
+      deletedFiles,
+      queuedBlobIds,
+    };
+  },
+});
+
+export const cleanupUnreferencedStorage = internalMutation({
+  args: {
+    before: v.optional(v.number()),
+    limit: v.optional(v.number()),
+    order: v.optional(v.union(v.literal("asc"), v.literal("desc"))),
+  },
+  returns: v.object({
+    scanned: v.number(),
+    deleted: v.number(),
+    needsAnotherPass: v.boolean(),
+  }),
+  handler: async (ctx, { before, limit, order }) => {
+    const cutoff = before ?? Date.now() - ABANDONED_UPLOAD_AGE_MS;
+    const scanOrder = order ?? "asc";
+    // Read the live set once, then spend the remaining read budget checking
+    // staged references for non-live files. At the 1,800-file maximum this can
+    // inspect 2,000 storage rows while remaining below 4,096 document reads.
+    const [liveAssets, files] = await Promise.all([
+      ctx.db.query("staticAssets").collect(),
+      ctx.db.system.query("_storage").order(scanOrder).take(STORAGE_SCAN_LIMIT),
+    ]);
+    const liveStorageIds = new Set(
+      liveAssets.flatMap((asset) =>
+        asset.storageId === undefined ? [] : [asset.storageId],
+      ),
+    );
+    const stagedLookupBudget = Math.max(
+      0,
+      3900 - liveAssets.length - files.length,
+    );
+    const deleteLimit = Math.min(
+      limit ?? MAINTENANCE_PAGE_LIMIT,
+      MAINTENANCE_PAGE_LIMIT,
+    );
+    let deleted = 0;
+    let scanned = 0;
+    let stagedLookups = 0;
+    let stoppedForReadBudget = false;
+    for (const file of files) {
+      if (deleted >= deleteLimit) break;
+      if (file._creationTime >= cutoff) {
+        if (scanOrder === "asc") break;
+        continue;
+      }
+      scanned++;
+      if (liveStorageIds.has(file._id)) continue;
+      if (stagedLookups >= stagedLookupBudget) {
+        stoppedForReadBudget = true;
+        break;
+      }
+      stagedLookups++;
+      const stagedReference = await ctx.db
+        .query("stagedAssets")
+        .withIndex("by_storageId", (q) => q.eq("storageId", file._id))
+        .first();
+      if (!stagedReference) {
+        await ctx.storage.delete(file._id);
+        deleted++;
+      }
+    }
+    return {
+      scanned,
+      deleted,
+      needsAnotherPass:
+        deleted === deleteLimit ||
+        stoppedForReadBudget ||
+        (deleted > 0 && files.length === STORAGE_SCAN_LIMIT),
+    };
+  },
+});
 
 async function setCurrentDeployment(
   ctx: MutationCtx,
   currentDeploymentId: string,
   spaFallback: boolean,
+  pendingBlobCleanupCount?: number,
 ) {
   const existing = await ctx.db.query("deploymentInfo").first();
   if (existing) {
@@ -255,12 +590,18 @@ async function setCurrentDeployment(
       currentDeploymentId,
       deployedAt: Date.now(),
       spaFallback,
+      ...(pendingBlobCleanupCount === undefined
+        ? {}
+        : { pendingBlobCleanupCount }),
     });
   } else {
     await ctx.db.insert("deploymentInfo", {
       currentDeploymentId,
       deployedAt: Date.now(),
       spaFallback,
+      ...(pendingBlobCleanupCount === undefined
+        ? {}
+        : { pendingBlobCleanupCount }),
     });
   }
 }
@@ -326,29 +667,94 @@ export const recordAssets = internalMutation({
 
 // Publish the complete manifest, deployment metadata, and old-asset cleanup in
 // one mutation. Until this succeeds, the previous deployment remains wholly
-// live. Newly uploaded files are still unreferenced, so the CLI can safely
-// delete them if this mutation fails.
+// live. Failure cleanup separately checks the live manifest before deleting
+// newly uploaded files in case this mutation committed but its response was
+// lost.
 export const publishDeployment = internalMutation({
   args: {
-    assets: v.array(v.object(recordAssetFields)),
     currentDeploymentId: v.string(),
+    expectedAssetCount: v.number(),
     spaFallback: v.optional(v.boolean()),
   },
   returns: v.object({
     deleted: v.number(),
-    blobIds: v.array(v.string()),
+    pendingBlobCleanup: v.number(),
   }),
-  handler: async (ctx, { assets, currentDeploymentId, spaFallback }) => {
-    assertAssetManifest(assets, currentDeploymentId);
+  handler: async (
+    ctx,
+    { currentDeploymentId, expectedAssetCount, spaFallback },
+  ) => {
+    if (
+      !Number.isInteger(expectedAssetCount) ||
+      expectedAssetCount < 1 ||
+      expectedAssetCount > MAX_ASSETS_PER_DEPLOYMENT
+    ) {
+      throw new Error(
+        `expectedAssetCount must be an integer from 1 to ${MAX_ASSETS_PER_DEPLOYMENT}`,
+      );
+    }
+    const stagedAssets = await ctx.db
+      .query("stagedAssets")
+      .withIndex("by_deploymentId", (q) =>
+        q.eq("deploymentId", currentDeploymentId),
+      )
+      .take(expectedAssetCount + 1);
+    const assets = stagedAssets.map(
+      ({ path, storageId, blobId, contentType, deploymentId }) => ({
+        path,
+        storageId,
+        blobId,
+        contentType,
+        deploymentId,
+      }),
+    );
+    if (assets.length !== expectedAssetCount) {
+      throw new Error(
+        `Staged manifest has ${assets.length} files; expected ${expectedAssetCount}`,
+      );
+    }
+    assertAssetManifest(assets, currentDeploymentId, true);
+    const manifestBytes = new TextEncoder().encode(
+      JSON.stringify(assets),
+    ).byteLength;
+    if (manifestBytes > MAX_MANIFEST_SERIALIZED_BYTES) {
+      throw new Error(
+        `The staged manifest is ${manifestBytes} bytes, above the safe limit of ${MAX_MANIFEST_SERIALIZED_BYTES} bytes. Shorten asset paths or reduce the number of files.`,
+      );
+    }
 
-    const oldAssets = await ctx.db.query("staticAssets").collect();
+    // Leave headroom below Convex's 4,096 document-read ceiling for deployment
+    // metadata and index bookkeeping. Taking one extra old row lets oversized
+    // v1-to-v2 migrations fail clearly instead of exceeding the platform limit.
+    const oldAssetReadLimit = MAX_PUBLISH_MANIFEST_READS - assets.length + 1;
+    const oldAssets = await ctx.db
+      .query("staticAssets")
+      .take(oldAssetReadLimit);
+    if (assets.length + oldAssets.length > MAX_PUBLISH_MANIFEST_READS) {
+      throw new Error(
+        `The old and new manifests contain more than ${MAX_PUBLISH_MANIFEST_READS} rows combined. Reduce the new build or clean up the legacy manifest before migrating.`,
+      );
+    }
     const blobIds: string[] = [];
-    let deleted = 0;
+    const storageIds = new Set<Id<"_storage">>();
     for (const asset of oldAssets) {
-      if (asset.storageId && (await deleteStorageFile(ctx, asset.storageId))) {
-        deleted++;
-      }
       if (asset.blobId) blobIds.push(asset.blobId);
+      if (asset.storageId) storageIds.add(asset.storageId);
+    }
+    const plannedDocumentWrites =
+      oldAssets.length +
+      storageIds.size +
+      blobIds.length +
+      assets.length +
+      stagedAssets.length +
+      2;
+    if (plannedDocumentWrites > MAX_PUBLISH_DOCUMENT_WRITES) {
+      throw new Error(
+        `Publishing this manifest would require ${plannedDocumentWrites} document writes, above the safe limit of ${MAX_PUBLISH_DOCUMENT_WRITES}. Reduce the number of files in the deployment.`,
+      );
+    }
+
+    for (const asset of oldAssets) {
       await ctx.db.delete("staticAssets", asset._id);
     }
 
@@ -362,8 +768,32 @@ export const publishDeployment = internalMutation({
       });
     }
 
-    await setCurrentDeployment(ctx, currentDeploymentId, spaFallback ?? true);
-    return { deleted, blobIds };
+    for (const asset of stagedAssets) {
+      await ctx.db.delete("stagedAssets", asset._id);
+    }
+
+    for (const blobId of blobIds) {
+      await ctx.db.insert("pendingBlobCleanup", { blobId });
+    }
+    for (const storageId of storageIds) {
+      await ctx.db.insert("pendingStorageCleanup", { storageId });
+    }
+
+    const pendingBlobCleanup = await adjustPendingBlobCleanupCount(
+      ctx,
+      blobIds.length,
+    );
+    await setCurrentDeployment(
+      ctx,
+      currentDeploymentId,
+      spaFallback ?? true,
+      pendingBlobCleanup,
+    );
+    // Old component-storage objects are collected in a separate bounded
+    // maintenance mutation. Keeping those deletes out of this transaction is
+    // what lets a 1,800-file manifest switch atomically below Convex's read
+    // and write limits.
+    return { deleted: 0, pendingBlobCleanup };
   },
 });
 

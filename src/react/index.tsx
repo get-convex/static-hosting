@@ -94,7 +94,7 @@ export function useDeploymentUpdates(
     dismiss,
     deployment,
     /**
-     * When set, the deployment query isn't exported from the app — the banner
+     * When set, the deployment query isn't exported from the app; the banner
      * won't work until the user wires it up. The string is suitable to render
      * during local development so the missing setup is obvious.
      */

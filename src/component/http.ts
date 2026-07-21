@@ -45,8 +45,8 @@ const serveStaticFile = httpAction(async (ctx, request) => {
     path = "/index.html";
   }
 
-  // One query resolves the asset: an exact match, or — when SPA fallback is
-  // enabled for the current deployment — the index.html asset for an
+  // One query resolves the asset: an exact match, or, when SPA fallback is
+  // enabled for the current deployment, the index.html asset for an
   // extension-less miss. The fallback lookup happens inside the query so the
   // HTTP action never makes a second round-trip.
   const asset = await ctx.runQuery(internal.lib.resolveAsset, { path });
