@@ -17,13 +17,15 @@ declare const _default: import("convex/server").SchemaDefinition<{
     }, {}, {}>;
     deploymentInfo: import("convex/server").TableDefinition<import("convex/values").VObject<{
         spaFallback?: boolean | undefined;
+        pendingBlobCleanupCount?: number | undefined;
         currentDeploymentId: string;
         deployedAt: number;
     }, {
         currentDeploymentId: import("convex/values").VString<string, "required">;
         deployedAt: import("convex/values").VFloat64<number, "required">;
         spaFallback: import("convex/values").VBoolean<boolean | undefined, "optional">;
-    }, "required", "currentDeploymentId" | "spaFallback" | "deployedAt">, {}, {}, {}>;
+        pendingBlobCleanupCount: import("convex/values").VFloat64<number | undefined, "optional">;
+    }, "required", "currentDeploymentId" | "spaFallback" | "deployedAt" | "pendingBlobCleanupCount">, {}, {}, {}>;
 }, true>;
 export default _default;
 //# sourceMappingURL=schema.d.ts.map

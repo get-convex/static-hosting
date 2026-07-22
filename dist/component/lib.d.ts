@@ -76,6 +76,7 @@ export declare const getCurrentDeployment: import("convex/server").RegisteredQue
     _id: import("convex/values").GenericId<"deploymentInfo">;
     _creationTime: number;
     spaFallback?: boolean | undefined;
+    pendingBlobCleanupCount?: number | undefined;
     currentDeploymentId: string;
     deployedAt: number;
 } | null>>;

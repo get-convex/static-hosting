@@ -15,11 +15,12 @@ export default defineSchema({
     deploymentInfo: defineTable({
         currentDeploymentId: v.string(),
         deployedAt: v.number(), // timestamp
-        // Forward-compat only: 0.2.x writes this field. 0.1.x ignores it, but the
-        // field must be allowed here so that if a deployment is upgraded to 0.2.x
+        // Forward-compat only: 0.2.x writes these fields. 0.1.x ignores them, but
+        // they must be allowed here so that if a deployment is upgraded to 0.2.x
         // and then rolled back to 0.1.x, the existing deploymentInfo row still
         // validates. See CHANGELOG 0.1.5.
         spaFallback: v.optional(v.boolean()),
+        pendingBlobCleanupCount: v.optional(v.number()),
     }),
 });
 //# sourceMappingURL=schema.js.map

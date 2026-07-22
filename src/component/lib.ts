@@ -186,6 +186,7 @@ const deploymentInfoValidator = v.object({
   // row written by 0.2.x still validates after a rollback to 0.1.x. See
   // CHANGELOG 0.1.5.
   spaFallback: v.optional(v.boolean()),
+  pendingBlobCleanupCount: v.optional(v.number()),
 });
 
 /**
