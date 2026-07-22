@@ -23,6 +23,8 @@ alongside your backend.
 
 https://github.com/user-attachments/assets/5eaf781f-87da-4292-9f96-38070c86cd39
 
+[![Share your slop with the Static Hosting Component!](https://thumbs.video-to-markdown.com/d5a10c30.jpg)](https://youtu.be/RNjTys_2OX4)
+
 ## Quick Start
 
 > **Upgrading an existing 0.1.x app?** This is not a package-only update. Point

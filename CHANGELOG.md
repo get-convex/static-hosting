@@ -70,6 +70,18 @@ existing deployment.
   return a non-cacheable HTTP 503 setup page until the first upload succeeds.
 - Removed the install-time console banner.
 
+## 0.1.5
+
+- Forward-compatibility for 0.2.x rollbacks. The `deploymentInfo` schema and
+  the `getCurrentDeployment` return validator now allow the optional
+  `spaFallback` (boolean) and `pendingBlobCleanupCount` (number) fields that
+  0.2.x writes to the deployment record. 0.1.5 ignores them, but allowing them
+  means a deployment upgraded to 0.2.x and later rolled back to 0.1.x keeps
+  validating. No behavior change for 0.1.x users; upgrade to 0.1.5 before
+  trying 0.2.x if you want a clean rollback path. (0.2.x also creates
+  additional tables such as `stagedAssets` and `cleanupState`; extra tables
+  don't fail 0.1.x schema validation, so they need no entry here.)
+
 ## 0.1.4
 
 - Added support for Windows
