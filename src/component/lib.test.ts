@@ -891,7 +891,12 @@ describe("component lib", () => {
       expect(asset?.contentType).toBe("text/html; charset=utf-8");
     });
 
-    test("hides inherited or deleted storage rows from compatibility routes", async () => {
+    test("surfaces the app-owned storage id for inherited v1 rows", async () => {
+      // A same-name v1→v2 migration inherits rows whose files live in the app's
+      // storage; the component can't resolve a URL for them. convex-test can't
+      // distinguish that from a deleted file, so deleting one reproduces the
+      // condition: resolveAssetForHttp surfaces appStorageId (no storageUrl) so
+      // the app-side handler can serve it from its own storage during migration.
       const t = initConvexTest();
       const storageId = await t.run(async (ctx) => {
         return await ctx.storage.store(new Blob(["legacy"]));
@@ -906,9 +911,12 @@ describe("component lib", () => {
         await ctx.storage.delete(storageId);
       });
 
-      expect(
-        await t.query(api.lib.resolveAssetForHttp, { path: "/index.html" }),
-      ).toBeNull();
+      const asset = await t.query(api.lib.resolveAssetForHttp, {
+        path: "/index.html",
+      });
+      expect(asset?.appStorageId).toBe(storageId);
+      expect(asset?.storageUrl).toBeUndefined();
+      expect(asset?.etag).toBe(`"${storageId}"`);
     });
 
     test("allows compatibility routes to override SPA fallback", async () => {

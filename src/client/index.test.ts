@@ -85,6 +85,57 @@ describe("registerStaticRoutes", () => {
     expect(await response.text()).toBe("<h1>Hello</h1>");
   });
 
+  test("serves an inherited v1 asset from the app's storage during migration", async () => {
+    const handler = staticHandler();
+    const runQuery = vi.fn().mockResolvedValue({
+      appStorageId: "app-storage-id",
+      contentType: "text/html; charset=utf-8",
+      etag: '"app-storage-id"',
+    });
+    const storageGet = vi.fn().mockResolvedValue(new Blob(["<h1>v1</h1>"]));
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const ctx = { runQuery, storage: { get: storageGet } };
+
+    const response = await (
+      handler as unknown as {
+        _handler: (c: typeof ctx, r: Request) => Promise<Response>;
+      }
+    )._handler(ctx, new Request("https://app.convex.site/"));
+
+    expect(response.status).toBe(200);
+    expect(storageGet).toHaveBeenCalledWith("app-storage-id");
+    // The file is read from app storage directly, never via a storage URL fetch.
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(response.headers.get("ETag")).toBe('"app-storage-id"');
+    expect(await response.text()).toBe("<h1>v1</h1>");
+  });
+
+  test("returns 304 for an inherited v1 asset without reading app storage", async () => {
+    const handler = staticHandler();
+    const runQuery = vi.fn().mockResolvedValue({
+      appStorageId: "app-storage-id",
+      contentType: "text/html; charset=utf-8",
+      etag: '"app-storage-id"',
+    });
+    const storageGet = vi.fn();
+    const ctx = { runQuery, storage: { get: storageGet } };
+
+    const response = await (
+      handler as unknown as {
+        _handler: (c: typeof ctx, r: Request) => Promise<Response>;
+      }
+    )._handler(
+      ctx,
+      new Request("https://app.convex.site/", {
+        headers: { "If-None-Match": '"app-storage-id"' },
+      }),
+    );
+
+    expect(response.status).toBe(304);
+    expect(storageGet).not.toHaveBeenCalled();
+  });
+
   test("returns a non-cacheable 503 setup page before the first upload", async () => {
     const handler = staticHandler();
     const runQuery = vi.fn().mockResolvedValue(null);

@@ -3,7 +3,7 @@ import {
   queryGeneric,
   type HttpRouter,
 } from "convex/server";
-import { v } from "convex/values";
+import { v, type GenericId } from "convex/values";
 import type { ComponentApi } from "../component/_generated/component.js";
 import {
   cacheControlFor,
@@ -118,6 +118,55 @@ export function registerStaticRoutes(
         headers: {
           Location: `${baseUrl.replace(/\/$/, "")}/${asset.blobId}`,
           "Cache-Control": cacheControl,
+        },
+      });
+    }
+
+    // TODO(remove in a future major): v1→v2 transitional path. The file still
+    // lives in the app's own storage (a same-name migration inherited the v1
+    // row; see the component's resolveAssetForHttp). Serve it directly from app
+    // storage so the site stays up during migration with no re-upload. Once v1
+    // app-storage assets are no longer supported, delete this branch.
+    if (asset.appStorageId) {
+      if (
+        asset.etag &&
+        etagMatches(request.headers.get("If-None-Match"), asset.etag)
+      ) {
+        return new Response(null, {
+          status: 304,
+          headers: { ETag: asset.etag, "Cache-Control": cacheControl },
+        });
+      }
+      const blob = await ctx.storage.get(
+        asset.appStorageId as GenericId<"_storage">,
+      );
+      if (!blob) {
+        // The component surfaces appStorageId whenever it can't resolve a
+        // storage URL, which also covers a genuinely deleted file (the two are
+        // indistinguishable from the component). If it isn't in app storage
+        // either, degrade like an empty deployment rather than erroring.
+        if (path === "/index.html") {
+          return new Response(getSetupHtml(), {
+            status: 503,
+            headers: {
+              "Content-Type": "text/html; charset=utf-8",
+              "Cache-Control": "no-store",
+              "Retry-After": "5",
+            },
+          });
+        }
+        return new Response("Not Found", {
+          status: 404,
+          headers: { "Content-Type": "text/plain" },
+        });
+      }
+      return new Response(blob, {
+        status: 200,
+        headers: {
+          "Content-Type": contentType,
+          "Cache-Control": cacheControl,
+          ...(asset.etag ? { ETag: asset.etag } : {}),
+          "X-Content-Type-Options": "nosniff",
         },
       });
     }

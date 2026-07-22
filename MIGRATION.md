@@ -25,9 +25,12 @@ It is not a package-only upgrade.
   that router below `/api` and breaks legacy ConvexFS uploads and asset URLs.
 - **Remove `exposeUploadApi`.** The CLI now calls private component functions
   directly; app-level upload wrappers no longer exist.
-- **Plan the production cutover.** A normal in-place upgrade can briefly show
-  the setup page between the backend deployment and the first 0.2.x upload. If
-  that is unacceptable, use the [staged cutover](#staged-cutover) below.
+- **Plan the production cutover.** In component-owned root mode, a normal
+  in-place upgrade can briefly show the setup page between the backend
+  deployment and the first 0.2.x upload. App-owned root routing
+  (`registerStaticRoutes`) avoids that gap: the app-side handler keeps serving
+  the inherited v1 files from app storage until the first upload replaces them.
+  If neither fits, use the [staged cutover](#staged-cutover) below.
 - **Check the built manifest.** 0.2.x accepts at most 1,800 files and 2 MiB of
   serialized manifest metadata per deployment so the atomic switch remains below
   Convex transaction limits. Reduce highly fragmented output or shorten deeply
@@ -280,9 +283,13 @@ npx @convex-dev/static-hosting deploy --component selfHosting
 The same rule applies to `upload`. Generated references also follow the custom
 name, for example `components.selfHosting`. Keeping `selfHosting` can preserve
 the old component rows during the backend switch. Those rows still point at app
-storage, so 0.2.x treats them as unavailable and serves the HTTP 503 setup page
-until the first v2 upload atomically replaces the manifest. The upload cleanup
-skips those foreign IDs; it does not delete the v1 app-storage blobs.
+storage, which the component itself cannot read. In component-owned root mode
+0.2.x therefore treats them as unavailable and serves the HTTP 503 setup page
+until the first v2 upload atomically replaces the manifest. In app-owned root
+routing (`registerStaticRoutes`) the app-side handler can read app storage, so
+it keeps serving those inherited v1 files with no interruption until the first
+upload replaces them. Either way the upload cleanup skips those foreign IDs; it
+does not delete the v1 app-storage blobs.
 
 The commands below show the default v2 instance name, `staticHosting`. Replace
 it with the exact chosen v2 name, such as `selfHosting` or `staticHostingV2`, in
@@ -361,9 +368,11 @@ unless you deliberately pass `--skip-build`; the CLI also supplies the correct
 base path and `VITE_CONVEX_URL` during its build.
 
 The ordinary command deploys the new backend before the first 0.2.x asset
-upload. We observed the setup page during that interval in a real 0.1.4 to 0.2
-migration. Use the [staged cutover](#staged-cutover) when even a short frontend
-interruption is unacceptable.
+upload. In component-owned root mode the site shows the setup page during that
+interval (we observed this in a real 0.1.4 to 0.2 migration). In app-owned root
+routing the previous v1 files keep serving through that interval, so there is no
+gap. Use the [staged cutover](#staged-cutover) when you need the component-owned
+mode and even a short frontend interruption is unacceptable.
 
 ## Clean up 0.1.x app-storage blobs
 

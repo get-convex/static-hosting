@@ -17,6 +17,8 @@ existing deployment.
 - `registerStaticRoutes` remains as a compatibility mode for apps that need to
   keep existing auth, webhook, or API routes at the root. It serves the new
   component-owned files from the app's existing `convex/http.ts` catch-all.
+  During a same-name v1→v2 migration it also serves inherited v1 files straight
+  from the app's own storage, so the live site stays up with no re-upload gap.
   Mounting the component's own handler is still the faster default.
 - `exposeDeploymentQuery` and `getConvexUrl` remain if you use the UpdateBanner.
 - The component is now named `staticHosting` (previously `selfHosting`). The CLI
@@ -28,10 +30,13 @@ existing deployment.
   deployment updates, you no longer need to expose anything. Convex 1.37.0 is
   now the minimum supported peer version because older releases do not export
   that hook.
-- Assets uploaded under 0.1.x lived in the app's storage — those references
-  won't resolve in 0.2.x. Run `npx @convex-dev/static-hosting deploy` to
-  repopulate. The first 0.2.x upload safely discards those legacy storage
-  references instead of trying to delete them from component storage. The old
+- Assets uploaded under 0.1.x lived in the app's storage — the component-owned
+  HTTP handler can't resolve those references in 0.2.x. Run
+  `npx @convex-dev/static-hosting deploy` to repopulate. (In app-owned root
+  routing the app-side handler keeps serving those v1 files from app storage
+  until the first upload replaces them, so that mode has no asset-less window.)
+  The first 0.2.x upload safely discards those legacy storage references
+  instead of trying to delete them from component storage. The old
   blobs remain in app storage until you explicitly clean them up after the
   rollback window. Older 0.1.x deploys may also have left historical blobs that
   the current asset manifest no longer lists, so follow the migration guide's

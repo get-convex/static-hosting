@@ -42,6 +42,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "internal",
         { path: string; spaFallback?: boolean },
         {
+          appStorageId?: string;
           blobId?: string;
           contentType: string;
           etag?: string;

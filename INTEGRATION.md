@@ -105,9 +105,12 @@ export default http;
 
 Exact routes win over the static catch-all. Uploads, deployment metadata, SPA
 configuration, and file storage remain inside the component, so you can remove
-the old `exposeUploadApi` wrappers. This compatibility mode adds an internal
-query and storage fetch on uncached requests. Use the component-owned handler
-when preserving root-level app routes is not necessary.
+the old `exposeUploadApi` wrappers. During a same-name 0.1.x→0.2.x migration
+this mode also keeps serving your existing v1 files from app storage until the
+first 0.2.x upload, so the live site never drops to the setup page. This
+compatibility mode adds an internal query and storage fetch on uncached
+requests. Use the component-owned handler when preserving root-level app routes
+is not necessary.
 
 ### `package.json`
 

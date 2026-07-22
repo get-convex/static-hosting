@@ -43,6 +43,12 @@ const httpAssetValidator = v.object({
   blobId: v.optional(v.string()),
   contentType: v.string(),
   etag: v.optional(v.string()),
+  // TODO(remove in a future major): v1→v2 transitional only. Set when an
+  // inherited v1 row points at app-owned storage the component can't read, so
+  // the app-side `registerStaticRoutes` handler can serve it from its own
+  // storage during migration. Drop this field once v1 app-storage assets are
+  // no longer supported.
+  appStorageId: v.optional(v.string()),
 });
 
 async function resolveAssetDocument(
@@ -133,14 +139,25 @@ export const resolveAssetForHttp = query({
       ? await ctx.storage.getUrl(asset.storageId)
       : null;
 
-    // During a same-name v1 to v2 migration, inherited v1 rows point at app
-    // storage and cannot be fetched by the component. Return no asset so the
-    // compatibility HTTP handler shows its normal setup response for `/` until
-    // the first v2 upload replaces the manifest.
-    if (asset.storageId && !storageUrl && !asset.blobId) return null;
+    // TODO(remove in a future major): v1→v2 transitional path. During a
+    // same-name migration, inherited v1 rows point at app-owned storage the
+    // component can't fetch (storageId present but no resolvable URL and no
+    // blob). Rather than hide them (which shows the setup page until the first
+    // v2 upload), surface the raw storage id so the app-side
+    // `registerStaticRoutes` handler can serve the file from its own storage —
+    // keeping the live site up with zero downtime and no re-upload. The
+    // component-owned HTTP handler still can't reach app storage, so it
+    // continues to show its setup page for this case. Once v1 app-storage
+    // assets are no longer supported, delete `appStorageId` and return null
+    // here instead.
+    const appStorageId =
+      asset.storageId && !storageUrl && !asset.blobId
+        ? asset.storageId
+        : undefined;
 
     return {
       ...(storageUrl ? { storageUrl } : {}),
+      ...(appStorageId ? { appStorageId } : {}),
       ...(asset.blobId ? { blobId: asset.blobId } : {}),
       contentType: asset.contentType,
       ...(asset.storageId ? { etag: `"${asset.storageId}"` } : {}),
