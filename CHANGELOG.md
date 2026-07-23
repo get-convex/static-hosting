@@ -2,15 +2,16 @@
 
 ## 0.2.0 Alpha
 
-Component-owned HTTP and storage. **Breaking — redeploy your static assets after
-upgrading.**
+Component-owned HTTP and storage.
+
+**Breaking — redeploy your static assets after upgrading.**
 
 See the [0.1.x to 0.2.x migration guide](./MIGRATION.md) before upgrading an
 existing deployment.
 
 - The component now hosts its own HTTP endpoints and owns the file storage that
   serves them. Wire it up with `app.use(staticHosting, { httpPrefix: "/" })` and
-  delete `convex/http.ts` + the upload-API re-exports from
+  delete related code in`convex/http.ts` + the upload-API re-exports from
   `convex/staticHosting.ts`.
 - Removed `exposeUploadApi` from the client API. Uploads and file lifecycle are
   now handled by private component functions.
@@ -24,7 +25,8 @@ existing deployment.
 - The component is now named `staticHosting` (previously `selfHosting`). The CLI
   invokes it directly via `npx convex run --component staticHosting lib:...`. If
   you mount the component under a different name, pass
-  `--component <your-name>`.
+  `--component <your-name>`. For a smooth upgrade, pass {name: "selfHosting} to
+  `app.use(staticHosting, { name: "selfHosting" })`
 - `useDeploymentUpdates` / `UpdateBanner` use `useQuery_experimental` and
   default to `api.staticHosting.getCurrentDeployment`. If you don't surface
   deployment updates, you no longer need to expose anything. Convex 1.37.0 is
@@ -35,12 +37,12 @@ existing deployment.
   `npx @convex-dev/static-hosting deploy` to repopulate. (In app-owned root
   routing the app-side handler keeps serving those v1 files from app storage
   until the first upload replaces them, so that mode has no asset-less window.)
-  The first 0.2.x upload safely discards those legacy storage references
-  instead of trying to delete them from component storage. The old
-  blobs remain in app storage until you explicitly clean them up after the
-  rollback window. Older 0.1.x deploys may also have left historical blobs that
-  the current asset manifest no longer lists, so follow the migration guide's
-  app-storage audit before cleanup.
+  The first 0.2.x upload safely discards those legacy storage references instead
+  of trying to delete them from component storage. The old blobs remain in app
+  storage until you explicitly clean them up after the rollback window. Older
+  0.1.x deploys may also have left historical blobs that the current asset
+  manifest no longer lists, so follow the migration guide's app-storage audit
+  before cleanup.
 - Default setup prefixes your own HTTP routes with
   `defineApp({ httpPrefix: "/api" })` so the static site can own the root
   without the catch-all route shadowing them. Use `registerStaticRoutes` when
@@ -72,15 +74,15 @@ existing deployment.
 
 ## 0.1.5
 
-- Forward-compatibility for 0.2.x rollbacks. The `deploymentInfo` schema and
-  the `getCurrentDeployment` return validator now allow the optional
-  `spaFallback` (boolean) and `pendingBlobCleanupCount` (number) fields that
-  0.2.x writes to the deployment record. 0.1.5 ignores them, but allowing them
-  means a deployment upgraded to 0.2.x and later rolled back to 0.1.x keeps
-  validating. No behavior change for 0.1.x users; upgrade to 0.1.5 before
-  trying 0.2.x if you want a clean rollback path. (0.2.x also creates
-  additional tables such as `stagedAssets` and `cleanupState`; extra tables
-  don't fail 0.1.x schema validation, so they need no entry here.)
+- Forward-compatibility for 0.2.x rollbacks. The `deploymentInfo` schema and the
+  `getCurrentDeployment` return validator now allow the optional `spaFallback`
+  (boolean) and `pendingBlobCleanupCount` (number) fields that 0.2.x writes to
+  the deployment record. 0.1.5 ignores them, but allowing them means a
+  deployment upgraded to 0.2.x and later rolled back to 0.1.x keeps validating.
+  No behavior change for 0.1.x users; upgrade to 0.1.5 before trying 0.2.x if
+  you want a clean rollback path. (0.2.x also creates additional tables such as
+  `stagedAssets` and `cleanupState`; extra tables don't fail 0.1.x schema
+  validation, so they need no entry here.)
 
 ## 0.1.4
 
