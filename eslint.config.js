@@ -8,6 +8,7 @@ import convexPlugin from "@convex-dev/eslint-plugin";
 export default [
   {
     ignores: [
+      ".context/**",
       "dist/**",
       "example/dist/**",
       "next-example/**",
