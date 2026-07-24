@@ -13,7 +13,7 @@ function convexBinPath(): string {
 function shellCommand(command: string): { command: string; args: string[] } {
   return process.platform === "win32"
     ? { command: "cmd.exe", args: ["/d", "/s", "/c", command] }
-    : { command: "sh", args: ["-lc", command] };
+    : { command: "sh", args: ["-c", command] };
 }
 
 export function runConvex(args: string[]): string {
