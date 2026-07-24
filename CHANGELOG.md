@@ -29,9 +29,7 @@ existing deployment.
   `app.use(staticHosting, { name: "selfHosting" })`
 - `useDeploymentUpdates` / `UpdateBanner` use `useQuery_experimental` and
   default to `api.staticHosting.getCurrentDeployment`. If you don't surface
-  deployment updates, you no longer need to expose anything. Convex 1.37.0 is
-  now the minimum supported peer version because older releases do not export
-  that hook.
+  deployment updates, you no longer need to expose anything.
 - Assets uploaded under 0.1.x lived in the app's storage — the component-owned
   HTTP handler can't resolve those references in 0.2.x. Run
   `npx @convex-dev/static-hosting deploy` to repopulate. (In app-owned root

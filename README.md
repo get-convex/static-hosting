@@ -34,7 +34,7 @@ https://github.com/user-attachments/assets/5eaf781f-87da-4292-9f96-38070c86cd39
 > sequencing, and verification.
 
 ```bash
-npm install convex@^1.37.0 @convex-dev/static-hosting
+npm install @convex-dev/static-hosting
 npx @convex-dev/static-hosting setup
 ```
 
@@ -53,10 +53,8 @@ Your app is live at `https://<deployment>.convex.site`.
 
 ### 1. Install
 
-This package requires Convex 1.37.0 or newer.
-
 ```bash
-npm install convex@^1.37.0 @convex-dev/static-hosting
+npm install @convex-dev/static-hosting
 ```
 
 ### 2. Register the component

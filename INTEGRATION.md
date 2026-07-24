@@ -17,7 +17,7 @@ SPA routing and smart caching.
 ## Quick Start
 
 ```bash
-npm install convex@^1.37.0 @convex-dev/static-hosting
+npm install @convex-dev/static-hosting
 npx @convex-dev/static-hosting setup
 ```
 
@@ -349,13 +349,12 @@ env var. Re-deploy without `--no-spa` or with `--spa` to turn it back on.
 
 ## Upgrading from 0.1.x
 
-0.2.0 is a **storage-breaking change**. Every existing app must upgrade to
-Convex 1.37.0 or newer, remove its `exposeUploadApi` wrappers, choose a
-root-routing mode, regenerate the component API, and upload its assets again.
-The old app-storage blobs also need an explicit cleanup after the rollback
-window; component-private storage cannot delete them automatically. The current
-v1 manifest is only a lower bound because older v1 uploads may already have left
-historical blobs in app storage.
+0.2.0 is a **storage-breaking change**. Every existing app must remove its
+`exposeUploadApi` wrappers, choose a root-routing mode, regenerate the component
+API, and upload its assets again. The old app-storage blobs also need an
+explicit cleanup after the rollback window; component-private storage cannot
+delete them automatically. The current v1 manifest is only a lower bound because
+older v1 uploads may already have left historical blobs in app storage.
 
 Read the dedicated [0.1.x to 0.2.x migration guide](./MIGRATION.md) before
 upgrading. It includes both routing options, component-name and CLI changes,
