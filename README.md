@@ -63,7 +63,7 @@ npm install @convex-dev/static-hosting
 
 ```ts
 import { defineApp } from "convex/server";
-import staticHosting from "@convex-dev/static-hosting/convex.config.js";
+import staticHosting from "@convex-dev/static-hosting/convex.config";
 
 // Your own HTTP endpoints (convex/http.ts) are served under /api so the
 // static site can own the root.
@@ -103,7 +103,7 @@ existing router.
 
 ```ts
 import { defineApp } from "convex/server";
-import staticHosting from "@convex-dev/static-hosting/convex.config.js";
+import staticHosting from "@convex-dev/static-hosting/convex.config";
 
 const app = defineApp();
 app.use(staticHosting); // no httpPrefix

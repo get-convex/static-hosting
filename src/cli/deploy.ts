@@ -31,6 +31,11 @@ import {
   buildEnvironmentChanged,
   type DeploymentUrls,
 } from "./deployEnvironment.js";
+import {
+  componentNameCandidates,
+  legacyComponentNameWarning,
+  LEGACY_COMPONENT_NAME,
+} from "./componentName.js";
 
 function showHelp(): void {
   console.log(`
@@ -92,15 +97,47 @@ function tryFetchUrls(componentName: string): DeploymentUrls | null {
   }
 }
 
-function fetchUrls(componentName: string): DeploymentUrls {
-  const urls = tryFetchUrls(componentName);
-  if (!urls) {
+interface ResolvedComponent {
+  urls: DeploymentUrls;
+  componentName: string;
+}
+
+// The legacy-name warning is printed at most once per invocation.
+let warnedLegacyName = false;
+
+/**
+ * Resolve the deployment URLs and the instance name that answered. When the
+ * caller relied on the default name we also probe the legacy 0.1.x name, so a
+ * same-name migration keeps working without `--component selfHosting`. Returns
+ * null if no candidate is deployed yet (the caller may deploy the backend and
+ * retry).
+ */
+function tryResolveComponent(requested: string): ResolvedComponent | null {
+  for (const componentName of componentNameCandidates(requested)) {
+    const urls = tryFetchUrls(componentName);
+    if (urls) {
+      if (componentName === LEGACY_COMPONENT_NAME && !warnedLegacyName) {
+        console.warn(legacyComponentNameWarning(componentName));
+        warnedLegacyName = true;
+      }
+      return { urls, componentName };
+    }
+  }
+  return null;
+}
+
+function resolveComponentOrExit(requested: string): ResolvedComponent {
+  const resolved = tryResolveComponent(requested);
+  if (!resolved) {
+    const names = componentNameCandidates(requested)
+      .map((name) => `"${name}"`)
+      .join(" or ");
     console.error(
-      `Could not reach component "${componentName}". Deploy the Convex backend first (npx convex deploy) and ensure --component matches the name in convex.config.ts.`,
+      `Could not reach component ${names}. Deploy the Convex backend first (npx convex deploy) and ensure --component matches the name in convex.config.ts.`,
     );
     process.exit(1);
   }
-  return urls;
+  return resolved;
 }
 
 /**
@@ -155,7 +192,11 @@ async function main(): Promise<void> {
   console.log("");
   console.log("Step 1: Getting deployment URLs...");
 
-  let urls = tryFetchUrls(args.component);
+  let resolved = tryResolveComponent(args.component);
+  let urls = resolved?.urls ?? null;
+  // Falls back to the requested name until the backend is deployed and a real
+  // instance answers; re-resolved after each deploy below.
+  let componentName = resolved?.componentName ?? args.component;
   const shouldDeployBackend = !args.skipConvex;
   let backendAlreadyDeployed = false;
 
@@ -186,7 +227,9 @@ async function main(): Promise<void> {
         process.exit(1);
       }
 
-      urls = fetchUrls(args.component);
+      resolved = resolveComponentOrExit(args.component);
+      urls = resolved.urls;
+      componentName = resolved.componentName;
       console.log("");
       console.log(`   ✓ Site URL: ${urls.siteUrl}`);
       backendAlreadyDeployed = true;
@@ -231,7 +274,9 @@ async function main(): Promise<void> {
     console.log("");
     console.log("   ✓ Convex backend deployed");
 
-    const deployedUrls = fetchUrls(args.component);
+    const deployedComponent = resolveComponentOrExit(args.component);
+    const deployedUrls = deployedComponent.urls;
+    componentName = deployedComponent.componentName;
     if (!args.skipBuild) {
       if (!urls || buildEnvironmentChanged(urls, deployedUrls)) {
         console.log("");
@@ -270,9 +315,12 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Pass the resolved instance name to the upload subprocess so it targets the
+  // same component (and doesn't re-probe or re-warn).
   const staticDeploySuccess = await uploadToConvexStorage({
     ...args,
     dist: distDir,
+    component: componentName,
   });
 
   if (!staticDeploySuccess) {
@@ -289,7 +337,7 @@ async function main(): Promise<void> {
   console.log(`✨ Deployment complete! (${duration}s)`);
   console.log("");
 
-  const finalUrls = urls ?? fetchUrls(args.component);
+  const finalUrls = urls ?? resolveComponentOrExit(args.component).urls;
   console.log(`Frontend: ${finalUrls.siteUrl}`);
 
   console.log("");
