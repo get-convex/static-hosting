@@ -316,17 +316,6 @@ import { useDeploymentUpdates } from "@convex-dev/static-hosting/react";
 const { updateAvailable, reload, dismiss } = useDeploymentUpdates();
 ```
 
-## Connecting to Convex from the frontend
-
-When your frontend is served from `*.convex.site`, you can derive the backend
-URL without an env var:
-
-```ts
-import { getConvexUrl } from "@convex-dev/static-hosting";
-
-const convexUrl = import.meta.env.VITE_CONVEX_URL ?? getConvexUrl();
-```
-
 ## Mounting under a sub-path
 
 Mount the static site under a sub-path if you have other routes at the root:

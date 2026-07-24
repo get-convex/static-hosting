@@ -207,16 +207,6 @@ import { useDeploymentUpdates } from "@convex-dev/static-hosting/react";
 const { updateAvailable, reload, dismiss } = useDeploymentUpdates();
 ```
 
-## Connecting to Convex from the frontend
-
-When served from `*.convex.site`, derive the backend URL automatically:
-
-```typescript
-import { getConvexUrl } from "@convex-dev/static-hosting";
-
-const convexUrl = import.meta.env.VITE_CONVEX_URL ?? getConvexUrl();
-```
-
 ## Legacy CDN mode
 
 Do not use `--cdn` for a new integration. It targets an older, unauthenticated
