@@ -13,7 +13,7 @@ function convexBinPath(): string {
 function shellCommand(command: string): { command: string; args: string[] } {
   return process.platform === "win32"
     ? { command: "cmd.exe", args: ["/d", "/s", "/c", command] }
-    : { command: "sh", args: ["-lc", command] };
+    : { command: "sh", args: ["-c", command] };
 }
 
 export function runConvex(args: string[]): string {
@@ -47,12 +47,12 @@ export function spawnConvex(args: string[]): number | null {
   }).status;
 }
 
-export function spawnNpmRun(
-  script: string,
+export function spawnShell(
+  command: string,
   env: NodeJS.ProcessEnv = process.env,
 ): number | null {
-  const command = shellCommand(`npm run ${script}`);
-  return spawnSync(command.command, command.args, {
+  const cmd = shellCommand(command);
+  return spawnSync(cmd.command, cmd.args, {
     env,
     stdio: "inherit",
   }).status;

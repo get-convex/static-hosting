@@ -1,4 +1,5 @@
 .DS_Store
+.context
 .idea
 *.local
 *.log
@@ -16,6 +17,6 @@ node_modules
 *.swp
 .mcp.json
 next-example/
+dist/
+example/dist/
 
-# Note: dist/ is NOT ignored - it's committed for GitHub installs
-# (npm install github:get-convex/static-hosting#main)

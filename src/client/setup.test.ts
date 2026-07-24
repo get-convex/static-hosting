@@ -20,7 +20,7 @@ export function initConvexTest<
   return t;
 }
 export const components = componentsGeneric() as unknown as {
-  selfHosting: ComponentApi;
+  staticHosting: ComponentApi;
 };
 
 test("setup", () => {});

@@ -1,15 +1,8 @@
 import { components } from "./_generated/api.js";
-import {
-  exposeUploadApi,
-  exposeDeploymentQuery,
-} from "@convex-dev/static-hosting";
+import { exposeDeploymentQuery } from "@convex-dev/static-hosting";
 
-// Expose the upload API as INTERNAL functions.
-// These can only be called via `npx convex run` - not from the public internet.
-export const { generateUploadUrl, generateUploadUrls, recordAsset, recordAssets, gcOldAssets, listAssets } =
-  exposeUploadApi(components.selfHosting);
-
-// Expose the deployment query for live reload notifications.
-// Clients subscribe to this to know when a new deployment is available.
-export const { getCurrentDeployment } =
-  exposeDeploymentQuery(components.selfHosting);
+// Public query for live-reload notifications. Only needed if you use
+// <UpdateBanner /> / useDeploymentUpdates from @convex-dev/static-hosting/react.
+export const { getCurrentDeployment } = exposeDeploymentQuery(
+  components.staticHosting,
+);

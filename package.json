@@ -9,7 +9,7 @@
   "bugs": {
     "url": "https://github.com/get-convex/static-hosting/issues"
   },
-  "version": "0.1.4",
+  "version": "0.2.0-alpha.2",
   "license": "Apache-2.0",
   "keywords": [
     "convex",
@@ -20,16 +20,15 @@
     "static-hosting": "dist/cli/index.js"
   },
   "scripts": {
-    "postinstall": "echo '\\n📦 @convex-dev/static-hosting installed!\\n\\n   🚀 Quick Setup (Interactive):\\n   npx @convex-dev/static-hosting setup\\n\\n   🤖 For LLMs: See INTEGRATION.md for complete integration instructions\\n   📖 Manual Setup: npx @convex-dev/static-hosting init\\n'",
     "dev": "run-p -r 'dev:*'",
     "dev:backend": "convex dev --typecheck-components",
     "dev:frontend": "cd example && vite --clearScreen false",
     "build:example": "cd example && vite build",
     "upload:static": "node dist/cli/index.js upload --dist ./example/dist --component staticHosting",
-    "deploy:static": "npm run build:example && npm run upload:static",
+    "deploy:static": "node dist/cli/index.js deploy --dist ./example/dist --component staticHosting --build-command \"npm run build:example\"",
     "dev:build": "chokidar 'tsconfig*.json' 'src/**/*.ts' -i '**/*.test.ts' -c 'npm run build:codegen' --initial",
     "predev": "path-exists .env.local dist || (npm run build && convex dev --once)",
-    "build": "tsc --project ./tsconfig.build.json",
+    "build": "tsc --build ./tsconfig.build.json --force",
     "build:codegen": "npx convex codegen --component-dir ./src/component && npm run build",
     "build:clean": "rm -rf dist *.tsbuildinfo && npm run build:codegen",
     "typecheck": "tsc --noEmit && tsc -p example && tsc -p example/convex",
@@ -39,6 +38,7 @@
     "test:watch": "vitest --typecheck --clearScreen false",
     "test:debug": "vitest --inspect-brk --no-file-parallelism",
     "test:coverage": "vitest run --coverage --coverage.reporter=text",
+    "prepare": "npm run build",
     "preversion": "npm ci && npm run build:clean && run-p test lint typecheck",
     "alpha": "npm version prerelease --preid alpha && npm publish --tag alpha && git push --follow-tags",
     "release": "npm version patch && npm publish && git push --follow-tags",
@@ -46,7 +46,10 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "CHANGELOG.md",
+    "INTEGRATION.md",
+    "MIGRATION.md"
   ],
   "exports": {
     "./package.json": "./package.json",
@@ -75,7 +78,7 @@
     }
   },
   "peerDependencies": {
-    "convex": "^1.35.0",
+    "convex": "^1.37.0",
     "react": "^18.3.1 || ^19.0.0"
   },
   "devDependencies": {
@@ -88,7 +91,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
     "chokidar-cli": "3.0.0",
-    "convex": "1.38.0",
+    "convex": "1.39.1",
     "convex-test": "0.0.40",
     "cpy-cli": "^7.0.0",
     "eslint": "9.39.1",

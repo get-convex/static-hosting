@@ -1,21 +1,32 @@
 #!/usr/bin/env node
 /**
- * CLI tool to upload static files to Convex storage.
+ * CLI tool to upload static files to a Convex static-hosting component.
  *
  * Usage:
  *   npx @convex-dev/static-hosting upload [options]
  *
  * Options:
  *   --dist <path>            Path to dist directory (default: ./dist)
- *   --component <module>     Module name where upload API is exposed — i.e. convex/<module>.ts (default: staticHosting)
+ *   --component <name>       Component instance name (default: staticHosting)
  *   --prod                   Deploy to production deployment
+ *   --build                  Run the frontend build before uploading
+ *   --build-command <cmd>    Override the frontend build command
+ *   --spa / --no-spa         Enable or disable SPA fallback
+ *   --cdn                    Use the legacy convex-fs integration
+ *   --cdn-delete-function    App function that deletes old CDN blobs
+ *   --concurrency <n>        Parallel upload workers (default: 5)
  *   --help                   Show help
  */
 
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join, relative, extname, resolve } from "path";
 import { randomUUID } from "crypto";
-import { runConvex, runConvexAsync, spawnNpmRun } from "./commands.js";
+import { runConvexAsync, spawnShell } from "./commands.js";
+import {
+  chunkBySerializedArgument,
+  MAX_CONVEX_ARGUMENT_BYTES,
+} from "./argumentChunks.js";
+import { parseUploadArgs } from "./args.js";
 
 // MIME type mapping
 const MIME_TYPES: Record<string, string> = {
@@ -44,56 +55,6 @@ function getMimeType(path: string): string {
   return MIME_TYPES[extname(path).toLowerCase()] || "application/octet-stream";
 }
 
-interface ParsedArgs {
-  dist: string;
-  component: string;
-  prod: boolean;
-  build: boolean;
-  cdn: boolean;
-  cdnDeleteFunction: string;
-  concurrency: number;
-  help: boolean;
-}
-
-function parseArgs(args: string[]): ParsedArgs {
-  const result: ParsedArgs = {
-    dist: "./dist",
-    component: "staticHosting",
-    prod: false, // Default to dev, use --prod for production
-    build: false,
-    cdn: false,
-    cdnDeleteFunction: "",
-    concurrency: 5,
-    help: false,
-  };
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === "--help" || arg === "-h") {
-      result.help = true;
-    } else if (arg === "--dist" || arg === "-d") {
-      result.dist = args[++i] || result.dist;
-    } else if (arg === "--component" || arg === "-c") {
-      result.component = args[++i] || result.component;
-    } else if (arg === "--prod") {
-      result.prod = true;
-    } else if (arg === "--no-prod" || arg === "--dev") {
-      result.prod = false;
-    } else if (arg === "--build" || arg === "-b") {
-      result.build = true;
-    } else if (arg === "--cdn") {
-      result.cdn = true;
-    } else if (arg === "--cdn-delete-function") {
-      result.cdnDeleteFunction = args[++i] || result.cdnDeleteFunction;
-    } else if (arg === "--concurrency" || arg === "-j") {
-      const val = parseInt(args[++i], 10);
-      if (val > 0) result.concurrency = val;
-    }
-  }
-
-  return result;
-}
-
 function showHelp(): void {
   console.log(`
 Usage: npx @convex-dev/static-hosting upload [options]
@@ -102,13 +63,17 @@ Upload static files from a dist directory to Convex storage.
 
 Options:
   -d, --dist <path>           Path to dist directory (default: ./dist)
-  -c, --component <module>    Module name where upload API is exposed — i.e.
-                              convex/<module>.ts (default: staticHosting). Not
-                              the registered component name from convex.config.ts.
+  -c, --component <name>      Static-hosting component instance name (default: staticHosting)
       --prod                  Deploy to production deployment
-  -b, --build                 Run 'npm run build' with correct VITE_CONVEX_URL before uploading
-      --cdn                   Upload non-HTML assets to convex-fs CDN instead of Convex storage
-      --cdn-delete-function <name>  Convex function to delete CDN blobs (default: <component>:deleteCdnBlobs)
+  -b, --build                 Run the build command with VITE_CONVEX_URL +
+                              STATIC_HOSTING_BASE_PATH set before uploading
+      --build-command <cmd>   Build command to run (default: 'npm run build').
+                              Implies --build.
+      --no-spa                Disable SPA fallback for this deployment (return a
+                              404 instead of falling back to /index.html)
+      --spa                   Enable SPA fallback for this deployment (default)
+      --cdn                   Use the legacy convex-fs integration
+      --cdn-delete-function <name>  Legacy app function that deletes CDN blobs
   -j, --concurrency <n>       Number of parallel uploads (default: 5)
   -h, --help                  Show this help message
 
@@ -118,44 +83,405 @@ Examples:
   npx @convex-dev/static-hosting upload --dist ./build --prod
   npx @convex-dev/static-hosting upload --build --prod
 
-  # Upload with CDN (non-HTML files served from CDN)
+  # Upload through an existing legacy convex-fs integration
   npx @convex-dev/static-hosting upload --cdn --prod
 `);
 }
 
 // Global flag for production mode
 let useProd = true;
+const MAX_ASSETS_PER_DEPLOYMENT = 1800;
+const MAX_MANIFEST_SERIALIZED_BYTES = 2 * 1024 * 1024;
+// A Convex CLI function result can be truncated around 64 KiB. Signed upload
+// URLs are long enough that 250 sometimes crosses that boundary.
+const UPLOAD_URL_BATCH_SIZE = 100;
+const MAINTENANCE_PAGE_SIZE = 256;
+const MAX_MAINTENANCE_PAGES = 20;
 
-function getEnvFileConvexUrl(): string | null {
-  if (!existsSync(".env.local")) {
-    return null;
-  }
-
-  const envContent = readFileSync(".env.local", "utf-8");
-  const match = envContent.match(/(?:VITE_)?CONVEX_URL=(.+)/);
-  return match?.[1]?.trim() || null;
+interface DeploymentUrls {
+  /** CONVEX_SITE_URL, including the component's mount prefix. */
+  siteUrl: string;
+  /** CONVEX_CLOUD_URL, the backend URL the frontend connects to. */
+  cloudUrl: string;
 }
 
-function getConvexEnv(name: string, prod: boolean): string | null {
+/**
+ * Resolve the component's deployment URLs. Bails the CLI if the component
+ * isn't deployed. Uploading wouldn't work either, so a fallback would only
+ * hide the real problem.
+ */
+async function fetchUrls(componentName: string): Promise<DeploymentUrls> {
   try {
-    return runConvex(["env", "get", name, ...(prod ? ["--prod"] : [])]) || null;
+    const out = await convexRunAsync(componentName, "lib:getUrls");
+    return JSON.parse(out);
   } catch {
-    return null;
+    console.error(
+      `Could not reach component "${componentName}". Deploy the Convex backend first and ensure --component matches the name in convex.config.ts.`,
+    );
+    process.exit(1);
   }
 }
 
 function convexRunAsync(
+  componentName: string | undefined,
   functionPath: string,
   args: Record<string, unknown> = {},
 ): Promise<string> {
+  const serializedArgs = JSON.stringify(args);
+  const argumentBytes = Buffer.byteLength(serializedArgs);
+  if (argumentBytes > MAX_CONVEX_ARGUMENT_BYTES) {
+    throw new Error(
+      "The Convex function argument is " +
+        argumentBytes +
+        " bytes, which exceeds the portable command-line limit. " +
+        "This is an internal chunking error; please report it.",
+    );
+  }
+
   return runConvexAsync([
     "run",
+    ...(componentName ? ["--component", componentName] : []),
     functionPath,
-    JSON.stringify(args),
+    serializedArgs,
     "--typecheck=disable",
     "--codegen=disable",
     ...(useProd ? ["--prod"] : []),
   ]);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+interface UploadedLocations {
+  storageIds: string[];
+  blobIds: string[];
+}
+
+interface PublishResult {
+  deleted: number;
+  pendingBlobCleanup: number;
+}
+
+async function cleanUpPendingCdnBlobs(
+  componentName: string,
+  cdnDeleteFunction: string,
+): Promise<number> {
+  if (!cdnDeleteFunction) return 0;
+
+  let cleaned = 0;
+  for (let page = 0; page < MAX_MAINTENANCE_PAGES; page++) {
+    const output = await convexRunAsync(
+      componentName,
+      "lib:listPendingBlobCleanup",
+      { limit: 250 },
+    );
+    const blobIds = JSON.parse(output) as unknown;
+    if (
+      !Array.isArray(blobIds) ||
+      !blobIds.every((blobId) => typeof blobId === "string")
+    ) {
+      throw new Error("Component returned invalid pending CDN cleanup data");
+    }
+    if (blobIds.length === 0) return cleaned;
+
+    const deleteChunks = chunkBySerializedArgument(blobIds, (chunk) => ({
+      blobIds: chunk,
+    }));
+    for (const chunk of deleteChunks) {
+      await convexRunAsync(undefined, cdnDeleteFunction, { blobIds: chunk });
+      await convexRunAsync(componentName, "lib:acknowledgeBlobCleanup", {
+        blobIds: chunk,
+      });
+      cleaned += chunk.length;
+    }
+  }
+  console.warn(
+    "Warning: CDN cleanup reached its per-run maintenance limit; a later upload will continue it.",
+  );
+  return cleaned;
+}
+
+async function cleanUpAbandonedUploads(
+  componentName: string,
+  cdnDeleteFunction: string,
+): Promise<void> {
+  let discarded = 0;
+  let deletedFiles = 0;
+  let queuedBlobIds = 0;
+
+  try {
+    let stagingDrained = false;
+    for (let page = 0; page < MAX_MAINTENANCE_PAGES; page++) {
+      const output = await convexRunAsync(
+        componentName,
+        "lib:cleanupAbandonedStaging",
+        { limit: MAINTENANCE_PAGE_SIZE },
+      );
+      const result = JSON.parse(output) as {
+        discarded?: unknown;
+        deletedFiles?: unknown;
+        queuedBlobIds?: unknown;
+      };
+      if (
+        typeof result.discarded !== "number" ||
+        typeof result.deletedFiles !== "number" ||
+        typeof result.queuedBlobIds !== "number"
+      ) {
+        throw new Error("Component returned invalid staging cleanup data");
+      }
+      discarded += result.discarded;
+      deletedFiles += result.deletedFiles;
+      queuedBlobIds += result.queuedBlobIds;
+      if (result.discarded < MAINTENANCE_PAGE_SIZE) {
+        stagingDrained = true;
+        break;
+      }
+    }
+    if (!stagingDrained) {
+      console.warn(
+        "Warning: Staging cleanup reached its per-run maintenance limit; a later upload will continue it.",
+      );
+    }
+
+    deletedFiles += await cleanUpPendingStorage(componentName);
+    deletedFiles += await cleanUpUnreferencedStorage(
+      componentName,
+      undefined,
+      "desc",
+    );
+    deletedFiles += await cleanUpUnreferencedStorage(
+      componentName,
+      undefined,
+      "asc",
+    );
+
+    if (discarded > 0 || deletedFiles > 0 || queuedBlobIds > 0) {
+      console.log(
+        `Recovered ${discarded} abandoned manifest record(s), removed ${deletedFiles} old unreferenced file(s), and queued ${queuedBlobIds} CDN blob(s) for cleanup.`,
+      );
+    }
+
+    if (cdnDeleteFunction) {
+      const cleaned = await cleanUpPendingCdnBlobs(
+        componentName,
+        cdnDeleteFunction,
+      );
+      if (cleaned > 0) {
+        console.log(`Cleaned up ${cleaned} pending CDN blob(s).`);
+      }
+    }
+  } catch (cleanupError) {
+    console.warn(
+      "Warning: Could not finish abandoned-upload maintenance: " +
+        errorMessage(cleanupError),
+    );
+  }
+}
+
+async function cleanUpUnreferencedStorage(
+  componentName: string,
+  before?: number,
+  order: "asc" | "desc" = "asc",
+): Promise<number> {
+  let deleted = 0;
+  for (let page = 0; page < MAX_MAINTENANCE_PAGES; page++) {
+    const output = await convexRunAsync(
+      componentName,
+      "lib:cleanupUnreferencedStorage",
+      {
+        limit: MAINTENANCE_PAGE_SIZE,
+        order,
+        ...(before === undefined ? {} : { before }),
+      },
+    );
+    const result = JSON.parse(output) as {
+      deleted?: unknown;
+      needsAnotherPass?: unknown;
+    };
+    if (
+      typeof result.deleted !== "number" ||
+      typeof result.needsAnotherPass !== "boolean"
+    ) {
+      throw new Error("Component returned invalid storage cleanup data");
+    }
+    deleted += result.deleted;
+    if (!result.needsAnotherPass) return deleted;
+  }
+  console.warn(
+    "Warning: Orphan storage cleanup reached its per-run maintenance limit; a later upload will continue it.",
+  );
+  return deleted;
+}
+
+async function cleanUpPendingStorage(componentName: string): Promise<number> {
+  let deleted = 0;
+  for (let page = 0; page < MAX_MAINTENANCE_PAGES; page++) {
+    const output = await convexRunAsync(
+      componentName,
+      "lib:cleanupPendingStorage",
+      { limit: MAINTENANCE_PAGE_SIZE },
+    );
+    const result = JSON.parse(output) as {
+      deleted?: unknown;
+      needsAnotherPass?: unknown;
+    };
+    if (
+      typeof result.deleted !== "number" ||
+      typeof result.needsAnotherPass !== "boolean"
+    ) {
+      throw new Error(
+        "Component returned invalid pending-storage cleanup data",
+      );
+    }
+    deleted += result.deleted;
+    if (!result.needsAnotherPass) return deleted;
+  }
+  console.warn(
+    "Warning: Published storage cleanup reached its per-run maintenance limit; a later upload will continue it.",
+  );
+  return deleted;
+}
+
+async function forEachWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+  let nextIndex = 0;
+  let firstError: unknown;
+
+  async function runWorker() {
+    while (firstError === undefined) {
+      const index = nextIndex++;
+      if (index >= items.length) return;
+      try {
+        await worker(items[index], index);
+      } catch (error) {
+        firstError ??= error;
+      }
+    }
+  }
+
+  const workerCount = Math.min(concurrency, items.length);
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+  if (firstError !== undefined) throw firstError;
+}
+
+async function cleanUpFailedUpload(
+  componentName: string,
+  deploymentId: string,
+  uploaded: UploadedLocations,
+  cdnDeleteFunction: string,
+  publishAttempted: boolean,
+) {
+  let discardSucceeded = false;
+  let discarded = 0;
+  try {
+    const output = await convexRunAsync(
+      componentName,
+      "lib:discardStagedDeployment",
+      { deploymentId },
+    );
+    const result = JSON.parse(output) as { discarded?: unknown };
+    if (typeof result.discarded !== "number") {
+      throw new Error("Component returned an invalid discard result");
+    }
+    discardSucceeded = true;
+    discarded = result.discarded;
+  } catch (cleanupError) {
+    console.warn(
+      "Warning: Could not discard the staged manifest: " +
+        errorMessage(cleanupError),
+    );
+  }
+
+  // Convex mutations have a single transaction order. If discard succeeds,
+  // either it removed the staged rows before a late publish could use them, or
+  // publish already committed and removed them first. In the latter case the
+  // component cleanup below sees the live references and keeps those files.
+  const canCleanComponentFiles = !publishAttempted || discardSucceeded;
+  if (uploaded.storageIds.length > 0 && canCleanComponentFiles) {
+    try {
+      let deleted = 0;
+      let stillReferenced = 0;
+      const chunks = chunkBySerializedArgument(
+        uploaded.storageIds,
+        (storageIds) => ({ storageIds }),
+      );
+      for (const storageIds of chunks) {
+        const output = await convexRunAsync(
+          componentName,
+          "lib:deleteUploadedFiles",
+          { storageIds },
+        );
+        const result = JSON.parse(output) as {
+          deleted?: unknown;
+          stillReferenced?: unknown;
+        };
+        if (typeof result.deleted === "number") deleted += result.deleted;
+        if (typeof result.stillReferenced === "number") {
+          stillReferenced += result.stillReferenced;
+        }
+      }
+      console.log(`Removed ${deleted} file(s) from the failed upload.`);
+      if (stillReferenced > 0) {
+        console.warn(
+          `Kept ${stillReferenced} file(s) because the live deployment references them. The publish may have completed even though its response was lost.`,
+        );
+      }
+    } catch (cleanupError) {
+      console.warn(
+        "Warning: Could not remove component files from the failed upload: " +
+          errorMessage(cleanupError),
+      );
+    }
+  } else if (uploaded.storageIds.length > 0) {
+    console.warn(
+      `${uploaded.storageIds.length} component file(s) were left in place because the CLI could not cancel or confirm the publish.`,
+    );
+  }
+
+  // The app-level CDN delete function cannot inspect component-private live
+  // references. Only delete CDN blobs when no publish was attempted, or when
+  // discard removed staged rows and therefore won the transaction race.
+  const canDeleteCdnBlobs =
+    !publishAttempted || (discardSucceeded && discarded > 0);
+  if (uploaded.blobIds.length > 0 && canDeleteCdnBlobs) {
+    try {
+      // Record these IDs before calling app-owned deletion. If that call fails
+      // or only partially completes, the next upload can retry safely.
+      const chunks = chunkBySerializedArgument(uploaded.blobIds, (blobIds) => ({
+        blobIds,
+      }));
+      for (const blobIds of chunks) {
+        await convexRunAsync(componentName, "lib:queueBlobCleanup", {
+          blobIds,
+        });
+      }
+
+      if (cdnDeleteFunction) {
+        const cleaned = await cleanUpPendingCdnBlobs(
+          componentName,
+          cdnDeleteFunction,
+        );
+        console.log(`Removed ${cleaned} pending CDN blob(s).`);
+      } else {
+        console.warn(
+          `${uploaded.blobIds.length} CDN blob(s) from the failed upload were queued for cleanup. Pass --cdn-delete-function on a later upload to delete them.`,
+        );
+      }
+    } catch (cleanupError) {
+      console.warn(
+        "Warning: Could not finish queuing or deleting CDN blobs from the failed upload: " +
+          errorMessage(cleanupError),
+      );
+    }
+  } else if (uploaded.blobIds.length > 0 && !canDeleteCdnBlobs) {
+    console.warn(
+      `${uploaded.blobIds.length} CDN blob(s) were left in place because the CLI could not determine whether the publish completed.`,
+    );
+  }
 }
 
 async function uploadWithConcurrency(
@@ -163,17 +489,20 @@ async function uploadWithConcurrency(
   componentName: string,
   deploymentId: string,
   useCdn: boolean,
-  siteUrl: string | null,
+  cdnUploadBase: string | null,
   concurrency: number,
-): Promise<void> {
+  spaFallback: boolean,
+  cdnDeleteFunction: string,
+): Promise<PublishResult> {
   const total = files.length;
+  const uploaded: UploadedLocations = { storageIds: [], blobIds: [] };
 
   // Separate CDN and storage files
   const cdnFiles: typeof files = [];
   const storageFiles: typeof files = [];
   for (const file of files) {
     const isHtml = file.contentType.startsWith("text/html");
-    if (useCdn && !isHtml && siteUrl) {
+    if (useCdn && !isHtml && cdnUploadBase) {
       cdnFiles.push(file);
     } else {
       storageFiles.push(file);
@@ -189,60 +518,94 @@ async function uploadWithConcurrency(
     contentType: string;
     deploymentId: string;
   }> = [];
+  let publishAttempted = false;
 
-  if (storageFiles.length > 0) {
-    // Step 1: Generate all upload URLs in one batch call
-    console.log(`  Generating ${storageFiles.length} upload URLs...`);
-    const urlsOutput = await convexRunAsync(
-      `${componentName}:generateUploadUrls`,
-      { count: storageFiles.length },
-    );
-    const uploadUrls: string[] = JSON.parse(urlsOutput);
+  try {
+    if (storageFiles.length > 0) {
+      // Keep both the Convex array value and the child-process stdout buffer
+      // bounded, even for a deployment with thousands of files.
+      console.log(`  Generating ${storageFiles.length} upload URLs...`);
+      const uploadUrls: string[] = [];
+      for (
+        let offset = 0;
+        offset < storageFiles.length;
+        offset += UPLOAD_URL_BATCH_SIZE
+      ) {
+        const count = Math.min(
+          UPLOAD_URL_BATCH_SIZE,
+          storageFiles.length - offset,
+        );
+        const urlsOutput = await convexRunAsync(
+          componentName,
+          "lib:generateUploadUrls",
+          { count },
+        );
+        const batch = JSON.parse(urlsOutput) as unknown;
+        if (
+          !Array.isArray(batch) ||
+          batch.length !== count ||
+          !batch.every((url) => typeof url === "string")
+        ) {
+          throw new Error("Component returned invalid upload URLs");
+        }
+        uploadUrls.push(...batch);
+      }
 
-    // Step 2: Upload all files in parallel via fetch
-    const storageIds: string[] = new Array(storageFiles.length);
-    const pending = new Set<Promise<void>>();
+      // Step 2: Upload all files in parallel via fetch
+      const storageIds: string[] = new Array(storageFiles.length);
+      await forEachWithConcurrency(
+        storageFiles,
+        concurrency,
+        async (file, idx) => {
+          const content = readFileSync(file.localPath);
+          const response = await fetch(uploadUrls[idx], {
+            method: "POST",
+            headers: { "Content-Type": file.contentType },
+            body: content,
+          });
+          if (!response.ok) {
+            throw new Error(
+              "Storage upload failed for " +
+                file.path +
+                ": " +
+                response.status +
+                " " +
+                response.statusText,
+            );
+          }
+          const { storageId } = (await response.json()) as {
+            storageId?: unknown;
+          };
+          if (typeof storageId !== "string") {
+            throw new Error(
+              "Storage upload returned no storageId for " + file.path,
+            );
+          }
+          storageIds[idx] = storageId;
+          uploaded.storageIds.push(storageId);
+          completed++;
+          const isHtml = file.contentType.startsWith("text/html");
+          console.log(
+            `  [${completed}/${total}] ${file.path} (${isHtml ? "storage/html" : "storage"})`,
+          );
+        },
+      );
 
-    for (let i = 0; i < storageFiles.length; i++) {
-      const idx = i;
-      const file = storageFiles[idx];
-      const task = (async () => {
-        const content = readFileSync(file.localPath);
-        const response = await fetch(uploadUrls[idx], {
-          method: "POST",
-          headers: { "Content-Type": file.contentType },
-          body: content,
+      for (let i = 0; i < storageFiles.length; i++) {
+        allAssets.push({
+          path: storageFiles[i].path,
+          storageId: storageIds[i],
+          contentType: storageFiles[i].contentType,
+          deploymentId,
         });
-        const { storageId } = (await response.json()) as { storageId: string };
-        storageIds[idx] = storageId;
-        completed++;
-        const isHtml = file.contentType.startsWith("text/html");
-        console.log(`  [${completed}/${total}] ${file.path} (${isHtml ? "storage/html" : "storage"})`);
-      })().then(() => { pending.delete(task); });
-      pending.add(task);
-      if (pending.size >= concurrency) {
-        await Promise.race(pending);
       }
     }
-    await Promise.all(pending);
 
-    for (let i = 0; i < storageFiles.length; i++) {
-      allAssets.push({
-        path: storageFiles[i].path,
-        storageId: storageIds[i],
-        contentType: storageFiles[i].contentType,
-        deploymentId,
-      });
-    }
-  }
-
-  // Upload CDN files (still uses per-file calls since CDN has its own upload endpoint)
-  if (cdnFiles.length > 0 && siteUrl) {
-    const pending = new Set<Promise<void>>();
-    for (const file of cdnFiles) {
-      const task = (async () => {
+    // Upload CDN files (still uses per-file calls since CDN has its own upload endpoint)
+    if (cdnFiles.length > 0 && cdnUploadBase) {
+      await forEachWithConcurrency(cdnFiles, concurrency, async (file) => {
         const content = readFileSync(file.localPath);
-        const uploadResponse = await fetch(`${siteUrl}/fs/upload`, {
+        const uploadResponse = await fetch(`${cdnUploadBase}/fs/upload`, {
           method: "POST",
           headers: { "Content-Type": file.contentType },
           body: content,
@@ -252,7 +615,13 @@ async function uploadWithConcurrency(
             `CDN upload failed for ${file.path}: ${uploadResponse.status}`,
           );
         }
-        const { blobId } = (await uploadResponse.json()) as { blobId: string };
+        const { blobId } = (await uploadResponse.json()) as {
+          blobId?: unknown;
+        };
+        if (typeof blobId !== "string") {
+          throw new Error("CDN upload returned no blobId for " + file.path);
+        }
+        uploaded.blobIds.push(blobId);
         allAssets.push({
           path: file.path,
           blobId,
@@ -261,42 +630,89 @@ async function uploadWithConcurrency(
         });
         completed++;
         console.log(`  [${completed}/${total}] ${file.path} (cdn)`);
-      })().then(() => { pending.delete(task); });
-      pending.add(task);
-      if (pending.size >= concurrency) {
-        await Promise.race(pending);
+      });
+    }
+
+    // Stage the manifest in portable command-line chunks. These rows are not
+    // served, so the previous deployment stays intact until publish succeeds.
+    const manifestChunks = chunkBySerializedArgument(allAssets, (assets) => ({
+      assets,
+    }));
+    for (let index = 0; index < manifestChunks.length; index++) {
+      console.log(
+        `  Staging manifest chunk ${index + 1}/${manifestChunks.length}...`,
+      );
+      await convexRunAsync(componentName, "lib:stageAssets", {
+        assets: manifestChunks[index],
+      });
+    }
+
+    // Publish the staged manifest, SPA setting, and old-asset GC in one
+    // mutation. The previous deployment stays intact if this call fails.
+    console.log("  Publishing deployment...");
+    publishAttempted = true;
+    const output = await convexRunAsync(
+      componentName,
+      "lib:publishDeployment",
+      {
+        currentDeploymentId: deploymentId,
+        expectedAssetCount: allAssets.length,
+        spaFallback,
+      },
+    );
+    const result = JSON.parse(output) as {
+      deleted?: unknown;
+      pendingBlobCleanup?: unknown;
+    };
+    if (
+      typeof result.deleted !== "number" ||
+      typeof result.pendingBlobCleanup !== "number"
+    ) {
+      throw new Error("Component returned an invalid publish result");
+    }
+    return {
+      deleted: result.deleted,
+      pendingBlobCleanup: result.pendingBlobCleanup,
+    };
+  } catch (error) {
+    if (publishAttempted) {
+      try {
+        const output = await convexRunAsync(
+          componentName,
+          "lib:getCurrentDeployment",
+        );
+        const current = JSON.parse(output) as {
+          currentDeploymentId?: unknown;
+          pendingBlobCleanupCount?: unknown;
+        } | null;
+        if (current?.currentDeploymentId === deploymentId) {
+          console.warn(
+            "The publish completed, but the CLI could not read a valid response. The new deployment is live and its files were kept.",
+          );
+          return {
+            deleted: 0,
+            pendingBlobCleanup:
+              typeof current.pendingBlobCleanupCount === "number"
+                ? current.pendingBlobCleanupCount
+                : 0,
+          };
+        }
+      } catch (reconcileError) {
+        console.warn(
+          "Warning: Could not determine whether the publish completed: " +
+            errorMessage(reconcileError),
+        );
       }
     }
-    await Promise.all(pending);
-  }
 
-  // Step 3: Record all assets in one batch call
-  if (allAssets.length > 0) {
-    console.log("  Recording assets...");
-    // recordAssets only handles storageId assets; CDN assets need individual recording
-    const storageAssets = allAssets.filter((a) => a.storageId);
-    const cdnAssets = allAssets.filter((a) => a.blobId);
-
-    if (storageAssets.length > 0) {
-      await convexRunAsync(`${componentName}:recordAssets`, {
-        assets: storageAssets.map((a) => ({
-          path: a.path,
-          storageId: a.storageId!,
-          contentType: a.contentType,
-          deploymentId: a.deploymentId,
-        })),
-      });
-    }
-
-    // CDN assets still need individual recording (they use blobId not storageId)
-    for (const asset of cdnAssets) {
-      await convexRunAsync(`${componentName}:recordAsset`, {
-        path: asset.path,
-        blobId: asset.blobId,
-        contentType: asset.contentType,
-        deploymentId: asset.deploymentId,
-      });
-    }
+    await cleanUpFailedUpload(
+      componentName,
+      deploymentId,
+      uploaded,
+      cdnDeleteFunction,
+      publishAttempted,
+    );
+    throw error;
   }
 }
 
@@ -325,8 +741,28 @@ function collectFiles(
   return files;
 }
 
+function estimateManifestBytes(
+  files: Array<{ path: string; contentType: string }>,
+  deploymentId: string,
+): number {
+  // IDs returned by Convex storage and convex-fs are much shorter than this.
+  // The generous placeholder lets us reject oversized path metadata before
+  // uploading while the component still enforces the exact serialized size.
+  const locationPlaceholder = "x".repeat(128);
+  return Buffer.byteLength(
+    JSON.stringify(
+      files.map((file) => ({
+        path: file.path,
+        storageId: locationPlaceholder,
+        contentType: file.contentType,
+        deploymentId,
+      })),
+    ),
+  );
+}
+
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
+  const args = parseUploadArgs(process.argv.slice(2));
 
   if (args.help) {
     showHelp();
@@ -336,37 +772,28 @@ async function main(): Promise<void> {
   // Set global prod flag
   useProd = args.prod;
 
+  // The component knows both its CONVEX_SITE_URL (where the app is served,
+  // including the mount prefix) and CONVEX_CLOUD_URL (what the frontend
+  // connects to). We fetch both in one call and trust neither hostname.
+  const { siteUrl: componentSiteUrl, cloudUrl: convexUrl } = await fetchUrls(
+    args.component,
+  );
+
   // Run build if requested
   if (args.build) {
-    let convexUrl: string | null = null;
-
-    if (useProd) {
-      convexUrl = getConvexEnv("CONVEX_CLOUD_URL", true);
-      if (!convexUrl) {
-        console.error("Could not get production Convex URL.");
-        console.error(
-          "Make sure you have deployed to production: npx convex deploy",
-        );
-        process.exit(1);
-      }
-    } else {
-      convexUrl =
-        getConvexEnv("CONVEX_CLOUD_URL", false) ?? getEnvFileConvexUrl();
-    }
-
-    if (!convexUrl) {
-      console.error("Could not determine Convex URL for build.");
-      process.exit(1);
-    }
+    const basePath = new URL(componentSiteUrl).pathname || "/";
 
     const envLabel = useProd ? "production" : "development";
     console.log(`🔨 Building for ${envLabel}...`);
+    console.log(`   Build command: ${args.buildCommand}`);
     console.log(`   VITE_CONVEX_URL=${convexUrl}`);
+    console.log(`   STATIC_HOSTING_BASE_PATH=${basePath}`);
     console.log("");
 
-    const buildResult = spawnNpmRun("build", {
+    const buildResult = spawnShell(args.buildCommand, {
       ...process.env,
       VITE_CONVEX_URL: convexUrl,
+      STATIC_HOSTING_BASE_PATH: basePath,
     });
 
     if (buildResult !== 0) {
@@ -391,19 +818,43 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // If CDN mode, we need the site URL for uploading to convex-fs
-  let siteUrl: string | null = null;
-  if (useCdn) {
-    siteUrl = getConvexSiteUrl(useProd);
-    if (!siteUrl) {
-      console.error("Error: Could not determine Convex site URL for CDN uploads.");
-      console.error("Make sure your Convex deployment is running.");
-      process.exit(1);
-    }
-  }
+  // /fs/upload lives at the deployment root, not under the component's
+  // mount prefix.
+  const cdnUploadBase = useCdn ? new URL(componentSiteUrl).origin : null;
 
   const deploymentId = randomUUID();
   const files = collectFiles(distDir, distDir);
+  if (files.length === 0) {
+    console.error(`Error: dist directory is empty: ${distDir}`);
+    console.error("Refusing to replace the live deployment with no files.");
+    process.exit(1);
+  }
+  if (!files.some((file) => file.path === "/index.html")) {
+    console.error(`Error: dist directory has no index.html: ${distDir}`);
+    console.error("Refusing to publish a static site without its entry point.");
+    process.exit(1);
+  }
+  if (files.length > MAX_ASSETS_PER_DEPLOYMENT) {
+    console.error(
+      `Error: dist directory contains ${files.length} files; the supported maximum is ${MAX_ASSETS_PER_DEPLOYMENT}.`,
+    );
+    console.error(
+      "Reduce the number of emitted files so publication stays within Convex transaction limits.",
+    );
+    process.exit(1);
+  }
+  const estimatedManifestBytes = estimateManifestBytes(files, deploymentId);
+  if (estimatedManifestBytes > MAX_MANIFEST_SERIALIZED_BYTES) {
+    console.error(
+      `Error: asset manifest metadata is approximately ${estimatedManifestBytes} bytes; the supported maximum is ${MAX_MANIFEST_SERIALIZED_BYTES}.`,
+    );
+    console.error(
+      "Shorten emitted asset paths or reduce the number of files so publication stays within Convex transaction byte limits.",
+    );
+    process.exit(1);
+  }
+
+  await cleanUpAbandonedUploads(componentName, args.cdnDeleteFunction);
 
   const envLabel = useProd ? "production" : "development";
   console.log(`🚀 Deploying to ${envLabel} environment`);
@@ -417,73 +868,69 @@ async function main(): Promise<void> {
   console.log(`Component: ${componentName}`);
   console.log("");
 
-  try {
-    await uploadWithConcurrency(
-      files,
-      componentName,
-      deploymentId,
-      useCdn,
-      siteUrl,
-      args.concurrency,
-    );
-  } catch {
-    console.error("Upload failed.");
-    process.exit(1);
-  }
+  const publishResult = await uploadWithConcurrency(
+    files,
+    componentName,
+    deploymentId,
+    useCdn,
+    cdnUploadBase,
+    args.concurrency,
+    args.spaFallback,
+    args.cdnDeleteFunction,
+  );
 
   console.log("");
 
-  // Garbage collect old files
-  const gcOutput = await convexRunAsync(`${componentName}:gcOldAssets`, {
-    currentDeploymentId: deploymentId,
-  });
-  const gcResult = JSON.parse(gcOutput);
-
-  // Handle both old format (number) and new format ({ deleted, blobIds })
-  const deletedCount = typeof gcResult === "number" ? gcResult : gcResult.deleted;
-  const oldBlobIds: string[] = typeof gcResult === "object" && gcResult.blobIds ? gcResult.blobIds : [];
-
-  if (deletedCount > 0) {
-    console.log(`Cleaned up ${deletedCount} old storage file(s) from previous deployments`);
+  let deletedCount = publishResult.deleted;
+  try {
+    // Publish queues only IDs from the old live manifest. Deleting that queue
+    // cannot race with files from another uploader that are not staged yet.
+    deletedCount += await cleanUpPendingStorage(componentName);
+  } catch (cleanupError) {
+    console.warn(
+      "Warning: The new deployment is live, but old component storage could not be fully removed: " +
+        errorMessage(cleanupError),
+    );
   }
 
-  // Clean up old CDN blobs if any
-  if (oldBlobIds.length > 0) {
-    const cdnDeleteFn = args.cdnDeleteFunction || `${componentName}:deleteCdnBlobs`;
+  if (deletedCount > 0) {
+    console.log(
+      `Cleaned up ${deletedCount} old storage file(s) from previous deployments`,
+    );
+  }
+
+  // Old CDN IDs are persisted by the component until the app-level delete
+  // function succeeds, including when the publish response was lost.
+  if (args.cdnDeleteFunction) {
     try {
-      await convexRunAsync(cdnDeleteFn, { blobIds: oldBlobIds });
-      console.log(`Cleaned up ${oldBlobIds.length} old CDN blob(s) from previous deployments`);
-    } catch {
-      console.warn(`Warning: Could not delete old CDN blobs. Make sure ${cdnDeleteFn} is defined.`);
+      const cleaned = await cleanUpPendingCdnBlobs(
+        componentName,
+        args.cdnDeleteFunction,
+      );
+      if (cleaned > 0) {
+        console.log(
+          `Cleaned up ${cleaned} old CDN blob(s) from previous deployments`,
+        );
+      }
+    } catch (error) {
+      console.warn(
+        "Warning: Could not delete old CDN blobs via " +
+          args.cdnDeleteFunction +
+          ": " +
+          errorMessage(error),
+      );
     }
+  } else if (publishResult.pendingBlobCleanup > 0) {
+    console.log(
+      `${publishResult.pendingBlobCleanup} CDN blob(s) are pending cleanup. Pass --cdn-delete-function to delete them.`,
+    );
   }
 
   console.log("");
   console.log("✨ Upload complete!");
 
-  // Show the deployment URL
-  const deployedSiteUrl = getConvexSiteUrl(useProd);
-  if (deployedSiteUrl) {
-    console.log("");
-    console.log(`Your app is now available at: ${deployedSiteUrl}`);
-  }
-}
-
-/**
- * Get the Convex site URL (.convex.site)
- */
-function getConvexSiteUrl(prod: boolean): string | null {
-  const siteUrl = getConvexEnv("CONVEX_SITE_URL", prod);
-  if (siteUrl) {
-    return siteUrl;
-  }
-
-  const cloudUrl = getConvexEnv("CONVEX_CLOUD_URL", prod);
-  if (cloudUrl?.includes(".convex.cloud")) {
-    return cloudUrl.replace(".convex.cloud", ".convex.site");
-  }
-
-  return null;
+  console.log("");
+  console.log(`Your app is now available at: ${componentSiteUrl}`);
 }
 
 main().catch((error) => {

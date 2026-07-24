@@ -54,13 +54,13 @@ Usage:
   npx @convex-dev/static-hosting <command> [options]
 
 Commands:
-  setup               Interactive setup wizard (creates files, configures deployment)
+  setup               Configure the component and add a deploy script
   deploy              One-shot deployment (Convex backend + static files)
   upload              Upload static files to Convex storage
   init                Print setup instructions for integration
 
 Examples:
-  # Interactive setup (recommended for first-time users)
+  # Quick setup (recommended for first-time users)
   npx @convex-dev/static-hosting setup
 
   # One-shot deployment
@@ -78,7 +78,7 @@ function printInitInstructions() {
 📦 Convex Static Hosting
 
 Quick Start:
-  npx @convex-dev/static-hosting setup    # Interactive setup wizard
+  npx @convex-dev/static-hosting setup    # Configure files and scripts
 
 For LLMs:
   Read INTEGRATION.md in this package for complete integration instructions
