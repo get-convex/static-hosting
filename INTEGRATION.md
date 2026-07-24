@@ -21,9 +21,6 @@ npm install convex@^1.37.0 @convex-dev/static-hosting
 npx @convex-dev/static-hosting setup
 ```
 
-Convex 1.37.0 is the minimum supported version. The optional React helpers use
-`useQuery_experimental`, which is not exported by older Convex releases.
-
 For a new app, the setup script:
 
 - Adds the component to `convex/convex.config.ts`
