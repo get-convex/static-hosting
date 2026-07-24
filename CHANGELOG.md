@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 Alpha
+## 0.2.0
 
 Component-owned HTTP and storage.
 
