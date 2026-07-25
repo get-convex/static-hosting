@@ -33,8 +33,8 @@ import {
 } from "./deployEnvironment.js";
 import {
   componentNameCandidates,
+  isLegacyAutoDetected,
   legacyComponentNameWarning,
-  LEGACY_COMPONENT_NAME,
 } from "./componentName.js";
 
 function showHelp(): void {
@@ -116,7 +116,7 @@ function tryResolveComponent(requested: string): ResolvedComponent | null {
   for (const componentName of componentNameCandidates(requested)) {
     const urls = tryFetchUrls(componentName);
     if (urls) {
-      if (componentName === LEGACY_COMPONENT_NAME && !warnedLegacyName) {
+      if (isLegacyAutoDetected(requested, componentName) && !warnedLegacyName) {
         console.warn(legacyComponentNameWarning(componentName));
         warnedLegacyName = true;
       }

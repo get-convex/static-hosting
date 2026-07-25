@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   componentNameCandidates,
   DEFAULT_COMPONENT_NAME,
+  isLegacyAutoDetected,
   LEGACY_COMPONENT_NAME,
   legacyComponentNameWarning,
 } from "./componentName.js";
@@ -24,6 +25,22 @@ describe("component name resolution", () => {
     expect(componentNameCandidates("staticHostingV2")).toEqual([
       "staticHostingV2",
     ]);
+  });
+
+  test("only an auto-detected legacy fallback warrants a warning", () => {
+    // Relied on the default, fell back to legacy: warn.
+    expect(
+      isLegacyAutoDetected(DEFAULT_COMPONENT_NAME, LEGACY_COMPONENT_NAME),
+    ).toBe(true);
+    // Explicitly requested the legacy name (e.g. deploy forwarding it to the
+    // upload subprocess): stay silent so a single command warns at most once.
+    expect(
+      isLegacyAutoDetected(LEGACY_COMPONENT_NAME, LEGACY_COMPONENT_NAME),
+    ).toBe(false);
+    // Resolved the default: nothing to warn about.
+    expect(
+      isLegacyAutoDetected(DEFAULT_COMPONENT_NAME, DEFAULT_COMPONENT_NAME),
+    ).toBe(false);
   });
 
   test("the legacy warning names the instance and the current default", () => {

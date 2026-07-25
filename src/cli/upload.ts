@@ -29,8 +29,8 @@ import {
 import { parseUploadArgs } from "./args.js";
 import {
   componentNameCandidates,
+  isLegacyAutoDetected,
   legacyComponentNameWarning,
-  LEGACY_COMPONENT_NAME,
 } from "./componentName.js";
 
 // MIME type mapping
@@ -132,7 +132,7 @@ async function fetchUrls(
         { quiet: true },
       );
       const urls: DeploymentUrls = JSON.parse(out);
-      if (name === LEGACY_COMPONENT_NAME) {
+      if (isLegacyAutoDetected(requested, name)) {
         console.warn(legacyComponentNameWarning(name));
       }
       return { urls, componentName: name };

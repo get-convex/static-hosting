@@ -23,6 +23,22 @@ export function componentNameCandidates(requested: string): string[] {
   return [DEFAULT_COMPONENT_NAME, LEGACY_COMPONENT_NAME];
 }
 
+/**
+ * Whether resolving `requested` to `resolved` was a legacy-name auto-detection
+ * worth warning about. Only true when the caller relied on the default and we
+ * fell back to the legacy name — an explicitly requested name (including a
+ * command forwarding the resolved name to a subprocess) is left silent so a
+ * single `deploy` warns at most once.
+ */
+export function isLegacyAutoDetected(
+  requested: string,
+  resolved: string,
+): boolean {
+  return (
+    requested === DEFAULT_COMPONENT_NAME && resolved === LEGACY_COMPONENT_NAME
+  );
+}
+
 /** Warning shown once when a command resolves to the legacy instance name. */
 export function legacyComponentNameWarning(name: string): string {
   return (
