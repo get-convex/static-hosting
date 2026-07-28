@@ -23,7 +23,10 @@ export function runConvex(args: string[]): string {
   }).trim();
 }
 
-export function runConvexAsync(args: string[]): Promise<string> {
+export function runConvexAsync(
+  args: string[],
+  options: { quiet?: boolean } = {},
+): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
       process.execPath,
@@ -31,7 +34,12 @@ export function runConvexAsync(args: string[]): Promise<string> {
       { encoding: "utf-8" },
       (error, stdout, stderr) => {
         if (error) {
-          console.error("Convex run failed:", stderr || stdout);
+          // Callers that probe optional components (e.g. resolving a legacy
+          // instance name) pass quiet so an expected miss isn't logged as a
+          // failure.
+          if (!options.quiet) {
+            console.error("Convex run failed:", stderr || stdout);
+          }
           reject(error);
           return;
         }

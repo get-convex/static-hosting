@@ -27,6 +27,11 @@ import {
   MAX_CONVEX_ARGUMENT_BYTES,
 } from "./argumentChunks.js";
 import { parseUploadArgs } from "./args.js";
+import {
+  componentNameCandidates,
+  isLegacyAutoDetected,
+  legacyComponentNameWarning,
+} from "./componentName.js";
 
 // MIME type mapping
 const MIME_TYPES: Record<string, string> = {
@@ -106,26 +111,49 @@ interface DeploymentUrls {
 }
 
 /**
- * Resolve the component's deployment URLs. Bails the CLI if the component
- * isn't deployed. Uploading wouldn't work either, so a fallback would only
- * hide the real problem.
+ * Resolve the component's deployment URLs and the instance name that answered.
+ *
+ * When the caller relied on the default name we also probe the legacy 0.1.x
+ * name so a same-name migration keeps working without `--component selfHosting`
+ * on every command; landing on the legacy name prints a one-time warning. Bails
+ * the CLI if no candidate is deployed. Uploading wouldn't work either, so a
+ * fallback would only hide the real problem.
  */
-async function fetchUrls(componentName: string): Promise<DeploymentUrls> {
-  try {
-    const out = await convexRunAsync(componentName, "lib:getUrls");
-    return JSON.parse(out);
-  } catch {
-    console.error(
-      `Could not reach component "${componentName}". Deploy the Convex backend first and ensure --component matches the name in convex.config.ts.`,
-    );
-    process.exit(1);
+async function fetchUrls(
+  requested: string,
+): Promise<{ urls: DeploymentUrls; componentName: string }> {
+  const candidates = componentNameCandidates(requested);
+  for (const name of candidates) {
+    try {
+      const out = await convexRunAsync(
+        name,
+        "lib:getUrls",
+        {},
+        { quiet: true },
+      );
+      const urls: DeploymentUrls = JSON.parse(out);
+      if (isLegacyAutoDetected(requested, name)) {
+        console.warn(legacyComponentNameWarning(name));
+      }
+      return { urls, componentName: name };
+    } catch {
+      // Try the next candidate name.
+    }
   }
+  console.error(
+    `Could not reach component ${candidates
+      .map((name) => `"${name}"`)
+      .join(" or ")}. Deploy the Convex backend first and ensure --component ` +
+      `matches the name in convex.config.ts.`,
+  );
+  process.exit(1);
 }
 
 function convexRunAsync(
   componentName: string | undefined,
   functionPath: string,
   args: Record<string, unknown> = {},
+  options: { quiet?: boolean } = {},
 ): Promise<string> {
   const serializedArgs = JSON.stringify(args);
   const argumentBytes = Buffer.byteLength(serializedArgs);
@@ -138,15 +166,18 @@ function convexRunAsync(
     );
   }
 
-  return runConvexAsync([
-    "run",
-    ...(componentName ? ["--component", componentName] : []),
-    functionPath,
-    serializedArgs,
-    "--typecheck=disable",
-    "--codegen=disable",
-    ...(useProd ? ["--prod"] : []),
-  ]);
+  return runConvexAsync(
+    [
+      "run",
+      ...(componentName ? ["--component", componentName] : []),
+      functionPath,
+      serializedArgs,
+      "--typecheck=disable",
+      "--codegen=disable",
+      ...(useProd ? ["--prod"] : []),
+    ],
+    options,
+  );
 }
 
 function errorMessage(error: unknown): string {
@@ -774,10 +805,12 @@ async function main(): Promise<void> {
 
   // The component knows both its CONVEX_SITE_URL (where the app is served,
   // including the mount prefix) and CONVEX_CLOUD_URL (what the frontend
-  // connects to). We fetch both in one call and trust neither hostname.
-  const { siteUrl: componentSiteUrl, cloudUrl: convexUrl } = await fetchUrls(
-    args.component,
-  );
+  // connects to). We fetch both in one call and trust neither hostname. This
+  // also resolves the instance name actually mounted (default or legacy).
+  const {
+    urls: { siteUrl: componentSiteUrl, cloudUrl: convexUrl },
+    componentName: resolvedComponentName,
+  } = await fetchUrls(args.component);
 
   // Run build if requested
   if (args.build) {
@@ -805,7 +838,7 @@ async function main(): Promise<void> {
   }
 
   const distDir = resolve(args.dist);
-  const componentName = args.component;
+  const componentName = resolvedComponentName;
   const useCdn = args.cdn;
 
   // Convex storage deployment

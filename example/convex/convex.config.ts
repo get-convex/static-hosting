@@ -1,5 +1,5 @@
 import { defineApp } from "convex/server";
-import staticHosting from "@convex-dev/static-hosting/convex.config.js";
+import staticHosting from "@convex-dev/static-hosting/convex.config";
 
 const app = defineApp({ httpPrefix: "/api" });
 

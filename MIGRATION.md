@@ -123,6 +123,17 @@ published 0.2.x package.
 
 ### 2. Choose a routing mode
 
+This choice also decides how much downtime the cutover can cost you, so make it
+before, not after, the storage work. If the app serves auth, webhooks, or a
+public API from the root and you keep the old 0.1.x instance name, **Option B
+plus the kept instance name is the zero-downtime path**: the app-side handler
+keeps serving the inherited v1 files from app storage until the first 0.2.x
+upload replaces the manifest, so there is no setup page and no 503 window during
+the switch. Component-owned root mode (Option A) cannot do this, because the
+component cannot read the inherited app-storage blobs and shows the setup page
+until the first upload. See [step 4](#4-check-scripts-and-component-names) for
+the instance-name mechanics.
+
 #### Option A: component-owned root (recommended)
 
 Use this when app-owned HTTP endpoints can move from `/route` to `/api/route`,
@@ -138,7 +149,7 @@ Replace the old component registration with:
 ```ts
 // convex/convex.config.ts
 import { defineApp } from "convex/server";
-import staticHosting from "@convex-dev/static-hosting/convex.config.js";
+import staticHosting from "@convex-dev/static-hosting/convex.config";
 
 // Routes from convex/http.ts are now served below /api.
 const app = defineApp({ httpPrefix: "/api" });
@@ -163,7 +174,7 @@ action serves the files after an internal component lookup.
 ```ts
 // convex/convex.config.ts
 import { defineApp } from "convex/server";
-import staticHosting from "@convex-dev/static-hosting/convex.config.js";
+import staticHosting from "@convex-dev/static-hosting/convex.config";
 
 const app = defineApp();
 app.use(staticHosting); // no httpPrefix: the app owns HTTP routing
@@ -191,6 +202,12 @@ export default http;
 Exact app routes take precedence over the static catch-all. This mode preserves
 their URLs, but an uncached static request adds an internal query and storage
 fetch compared with component-owned serving.
+
+If you also keep the 0.1.x instance name (see
+[step 4](#4-check-scripts-and-component-names)), this mode has no downtime
+window: the app-side handler serves the inherited v1 files from app storage
+until the first 0.2.x upload atomically replaces the manifest. This is the
+recommended combination for apps whose root URLs cannot move.
 
 ### 3. Remove the old upload facade
 
@@ -295,6 +312,28 @@ The commands below show the default v2 instance name, `staticHosting`. Replace
 it with the exact chosen v2 name, such as `selfHosting` or `staticHostingV2`, in
 every `--component` flag and generated `components.*` reference.
 
+> **Keeping a custom name has an ongoing cost.** Every `deploy` and `upload`
+> command needs the matching `--component` flag for as long as the name differs
+> from the default. Forgetting it is not silent: the CLI resolves the component
+> by name before uploading, so an unknown name stops with
+> `Could not reach component "..."` rather than writing to the wrong place. As a
+> convenience, when you rely on the default and only the legacy `selfHosting`
+> instance exists, the CLI finds it automatically and prints a warning
+> suggesting you rename to `staticHosting`. A mistyped custom name still errors,
+> so a typo cannot quietly publish to an empty component.
+
+If you would rather not carry the flag indefinitely, keep the custom name only
+long enough to complete the zero-downtime cutover, then rename to the default
+`staticHosting` as a separate, non-urgent step. Renaming in place would create a
+fresh empty component, so do it the same way as the staged cutover: mount both
+the current instance and a new `staticHosting` instance, upload the assets to
+`staticHosting`, switch serving to `components.staticHosting`, verify, and only
+then remove the old mount. Because the new instance is fully populated before
+serving moves to it, that second switch also has no downtime. See
+[Staged cutover](#staged-cutover) for the two-instance mechanics; the only
+difference is that both mounts are 0.2.x, so no `static-hosting-legacy` alias is
+involved.
+
 ### 5. Regenerate and test on a development deployment
 
 Push the new component definition and regenerate `components.*` references:
@@ -342,7 +381,10 @@ Test all of the following on the development `*.convex.site` URL:
 - If the app uses Convex Auth at the root, both
   `/.well-known/openid-configuration` and `/.well-known/jwks.json` still return
   JSON successfully.
-- Hashed assets have long-lived immutable caching, while HTML revalidates.
+- Hashed assets return `Cache-Control: public, max-age=31536000, immutable` and
+  HTML returns `public, max-age=0, must-revalidate`. The long `max-age` is the
+  load-bearing part; a CDN or proxy in front of the deployment may drop the
+  `immutable` directive, which is harmless.
 - If used, the update banner detects a later upload.
 
 ### 6. Deploy production
@@ -424,8 +466,28 @@ export before migrating rather than accepting a truncated cleanup manifest.
 
 ### Audit app storage for older v1 orphans
 
-The Convex dashboard can export the app's `_storage` metadata. An agent can also
-add this temporary paginated internal query before migration:
+The simplest path is `npx convex data`, which reads `_storage` metadata directly
+with no code deploy:
+
+```bash
+npx convex data _storage --prod --limit 1000 --order asc \
+  > ~/static-hosting-v1-storage.json
+```
+
+This is read-only, so it works even when the repository carries unshipped work
+that a temporary query would force into production. Raise `--limit` above the
+row count `npx convex data` reports for `_storage`, and if the table is larger
+than one `data` page can return, fall back to the paginated query below.
+
+> **This lists the whole `_storage` table, not just static-hosting files.** If
+> the app uses file storage for anything else — user uploads, exports,
+> attachments, other components' blobs — those rows appear here too, and nothing
+> in the metadata marks a row as static hosting. Treat this output as an
+> inventory to classify, never as a delete list. The classification and approval
+> steps below are mandatory before removing anything.
+
+For a `_storage` table larger than one `npx convex data` page, add this
+temporary paginated internal query before migration and walk every page:
 
 ```ts
 // convex/auditStaticHostingStorage.ts
@@ -467,8 +529,11 @@ npx convex run auditStaticHostingStorage:listAppStorage \
 Repeat with each returned `continueCursor` until `isDone` is true. Remove the
 temporary query after the inventory is safely stored.
 
-The `_storage` table can also contain uploads owned by the rest of the app. The
-IDs from the current v1 manifest are definitely static-hosting files. Classify
+The `_storage` table can also contain uploads owned by the rest of the app —
+user-uploaded images, generated exports, attachments, or blobs written by other
+components all share this one table, and none of them carry a marker
+distinguishing them from static-hosting assets. The IDs from the current v1
+manifest are the only rows that are definitely static-hosting files. Classify
 additional historical candidates using deployment timing, content type, size,
 hash matches to known static assets, and, when necessary, the blob contents. In
 the rehearsal, duplicate hashes and adjacent creation times tied the older CSS
@@ -569,7 +634,7 @@ temporary prefix:
 ```ts
 // convex/convex.config.ts
 import { defineApp } from "convex/server";
-import staticHosting from "@convex-dev/static-hosting/convex.config.js";
+import staticHosting from "@convex-dev/static-hosting/convex.config";
 import staticHostingLegacy from "static-hosting-legacy/convex.config.js";
 
 const app = defineApp();
