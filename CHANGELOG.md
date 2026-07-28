@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1
+
+- Smoother migration story, with more automatic fallbacks to the old component
+  name.
+
 ## 0.2.0
 
 Component-owned HTTP and storage.
