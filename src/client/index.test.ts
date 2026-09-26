@@ -136,6 +136,32 @@ describe("registerStaticRoutes", () => {
     expect(storageGet).not.toHaveBeenCalled();
   });
 
+  test.each([
+    ["/", 503],
+    ["/legacy.js", 404],
+  ])(
+    "treats an inherited v1 file missing from app storage as missing: %s",
+    async (path, status) => {
+      const handler = staticHandler();
+      const runQuery = vi.fn().mockResolvedValue({
+        appStorageId: "deleted-storage-id",
+        contentType: "application/javascript; charset=utf-8",
+      });
+      const ctx = {
+        runQuery,
+        storage: { get: vi.fn().mockResolvedValue(null) },
+      };
+
+      const response = await (
+        handler as unknown as {
+          _handler: (c: typeof ctx, r: Request) => Promise<Response>;
+        }
+      )._handler(ctx, new Request(`https://app.convex.site${path}`));
+
+      expect(response.status).toBe(status);
+    },
+  );
+
   test("returns a non-cacheable 503 setup page before the first upload", async () => {
     const handler = staticHandler();
     const runQuery = vi.fn().mockResolvedValue(null);
