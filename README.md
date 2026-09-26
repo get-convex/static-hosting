@@ -432,6 +432,9 @@ are not uploaded yet. That is why the missing-asset response above uses
 Use `decodeRequestPath` for your own path checks, so an encoded request such as
 `/%61ssets/app.js` still matches `/assets/`.
 
+See [`example-ssr/`](./example-ssr) for TanStack Start pages rendered in a
+Convex HTTP action this way.
+
 ## Upgrading from 0.1.x
 
 0.2.0 moves uploads and file storage into the component. You must remove the
@@ -463,7 +466,8 @@ steps, verification, rollback, and the optional staged cutover.
 
 ## Example
 
-See [`example/`](./example) for a complete Vite + React app.
+See [`example/`](./example) for a complete Vite + React app, and
+[`example-ssr/`](./example-ssr) for server rendering with TanStack Start.
 
 ```bash
 npm install

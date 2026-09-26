@@ -11,6 +11,8 @@ export default [
       ".context/**",
       "dist/**",
       "example/dist/**",
+      "example-ssr/dist/**",
+      "example-ssr/src/routeTree.gen.ts",
       "next-example/**",
       "*.config.{js,mjs,cjs,ts,tsx}",
       "example/**/*.config.{js,mjs,cjs,ts,tsx}",
@@ -19,7 +21,11 @@ export default [
     ],
   },
   {
-    files: ["src/**/*.{js,mjs,cjs,ts,tsx}", "example/**/*.{js,mjs,cjs,ts,tsx}"],
+    files: [
+      "src/**/*.{js,mjs,cjs,ts,tsx}",
+      "example/**/*.{js,mjs,cjs,ts,tsx}",
+      "example-ssr/**/*.{js,mjs,cjs,ts,tsx}",
+    ],
     languageOptions: {
       parser: tseslint.parser,
       parserOptions: {
@@ -27,6 +33,8 @@ export default [
           "./tsconfig.json",
           "./example/tsconfig.json",
           "./example/convex/tsconfig.json",
+          "./example-ssr/tsconfig.json",
+          "./example-ssr/convex/tsconfig.json",
         ],
         tsconfigRootDir: import.meta.dirname,
       },
@@ -36,7 +44,12 @@ export default [
   ...tseslint.configs.recommended,
   // Convex code - Worker environment
   {
-    files: ["src/**/*.{ts,tsx}", "example/convex/**/*.{ts,tsx}"],
+    files: [
+      "src/**/*.{ts,tsx}",
+      "example/convex/**/*.{ts,tsx}",
+      "example-ssr/convex/**/*.{ts,tsx}",
+      "example-ssr/adapter/server.ts",
+    ],
     ignores: ["src/react/**"],
     languageOptions: {
       globals: globals.worker,
@@ -68,7 +81,11 @@ export default [
   },
   // React app code - Browser environment
   {
-    files: ["src/react/**/*.{ts,tsx}", "example/src/**/*.{ts,tsx}"],
+    files: [
+      "src/react/**/*.{ts,tsx}",
+      "example/src/**/*.{ts,tsx}",
+      "example-ssr/src/**/*.{ts,tsx}",
+    ],
     languageOptions: {
       ecmaVersion: 2020,
       globals: globals.browser,

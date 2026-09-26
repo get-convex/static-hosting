@@ -33,6 +33,7 @@ jobs:
         run: |
           npm i
           npm run build
+          npm run build:example:ssr
       - name: Publish package for testing branch
         run:
           npx pkg-pr-new publish || echo "Have you set up pkg-pr-new for this
