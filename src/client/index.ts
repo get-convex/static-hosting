@@ -131,6 +131,70 @@ export function registerStaticRoutes(
 }
 
 /**
+ * Serve an uploaded static file from your own HTTP action, or return null when
+ * no file matches so the action can continue with its own routing: server
+ * rendering, prerendered pages, redirects.
+ *
+ * Found files get the same response as `registerStaticRoutes`: content type,
+ * cache headers, ETag revalidation, and legacy CDN redirects. A found file
+ * whose storage can't be read gets a 500 response. A request path with
+ * malformed percent-encoding matches no file, so it returns null.
+ *
+ * The lookup is exact by default. `/` is not mapped to `/index.html`, and there
+ * is no SPA fallback, so the SPA shell never answers for a route your action
+ * handles. To serve the shell, pass `{ path: "/index.html" }`. When your route
+ * has a prefix, pass `path` with the prefix removed.
+ *
+ * @example
+ * ```typescript
+ * // convex/http.ts
+ * const http = httpRouter();
+ * http.route({
+ *   pathPrefix: "/",
+ *   method: "GET",
+ *   handler: httpAction(async (ctx, request) => {
+ *     const file = await serveStaticAsset(ctx, components.staticHosting, request);
+ *     if (file) return file;
+ *     return await renderPage(request);
+ *   }),
+ * });
+ * export default http;
+ * ```
+ */
+export async function serveStaticAsset(
+  ctx: AssetServingCtx,
+  component: ComponentApi,
+  request: Request,
+  {
+    path,
+    spaFallback = false,
+    cdnBaseUrl,
+  }: {
+    /**
+     * Decoded file path to look up, starting with `/`, such as
+     * `/about/index.html`. Defaults to the decoded request path.
+     */
+    path?: string;
+    /** Serve `/index.html` for a missing path without a file extension. */
+    spaFallback?: boolean;
+    /** Optional custom base URL for convex-fs blob redirects. */
+    cdnBaseUrl?: CdnBaseUrl;
+  } = {},
+): Promise<Response | null> {
+  if (path !== undefined && !path.startsWith("/")) {
+    throw new Error("path must start with /");
+  }
+  const filePath = path ?? decodeRequestPath(new URL(request.url).pathname);
+  if (filePath === null) return null;
+  return await serveAsset(ctx, component, request, filePath, {
+    spaFallback,
+    cdnBaseUrl,
+  });
+}
+
+export { decodeRequestPath };
+
+/**
  * Serve the uploaded file at `path` (decoded, relative to the mount prefix),
  * or return null when no file matches. An undefined `spaFallback` uses the
  * deployment's stored setting.
