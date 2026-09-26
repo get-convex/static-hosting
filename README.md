@@ -18,8 +18,9 @@ alongside your backend.
   new version is ready.
 - 🔒 **Authenticated uploads:** uploads go through the Convex CLI's
   authenticated session; there's no public upload endpoint.
-- 🧹 **Automatic cleanup:** files from previous 0.2.x deployments are garbage
-  collected on every deploy. The migration guide covers one-time v1 cleanup.
+- 🧹 **Automatic cleanup:** files from previous 0.2.x deployments stay available
+  for seven days, so open pages keep working, and are then garbage collected on
+  a later deploy. The migration guide covers one-time v1 cleanup.
 
 https://github.com/user-attachments/assets/5eaf781f-87da-4292-9f96-38070c86cd39
 
@@ -247,8 +248,9 @@ takes precedence over it.
 
 Each upload is published atomically, so visitors never see a page that refers to
 assets that are not available yet. Failed uploads leave the previous deployment
-live, and old files are cleaned up safely. See [INTEGRATION.md](./INTEGRATION.md)
-for upload limits and lifecycle details.
+live. Replaced files stay available for seven days, so pages that are already
+open can still load their scripts, and are then cleaned up safely. See
+[INTEGRATION.md](./INTEGRATION.md) for upload limits and lifecycle details.
 
 Convex HTTP routes currently support GET but not HEAD. Configure uptime checks
 to make a lightweight GET request rather than a HEAD request.

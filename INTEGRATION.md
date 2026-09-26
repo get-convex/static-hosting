@@ -287,13 +287,16 @@ npx @convex-dev/static-hosting upload [options]
 
 The complete manifest is staged in small, portable command-line chunks after all
 uploads finish. One final mutation atomically publishes the manifest and
-deployment settings. Old component storage is removed immediately afterward in
-bounded cleanup transactions. A failed attempt leaves the previous deployment
-live and removes only new files that are not referenced by the live manifest.
-The supported maximum is 1,800 files and 2 MiB of serialized manifest metadata,
-which keeps the atomic switch below Convex transaction limits. Upload URLs are
-generated in bounded batches. Later uploads recover component files and staging
-records left unreferenced for more than 24 hours after an interrupted CLI.
+deployment settings. Replaced files stay in component storage for seven days: a
+request for a missing file with an extension, except HTML, gets the newest
+replaced copy, so pages that are already open can still load their scripts.
+Later uploads remove expired files in bounded cleanup transactions. A failed
+attempt leaves the previous deployment live and removes only new files that are
+not referenced by the live manifest. The supported maximum is 1,800 files and 2
+MiB of serialized manifest metadata, which keeps the atomic switch below Convex
+transaction limits. Upload URLs are generated in bounded batches. Later uploads
+recover component files and staging records left unreferenced for more than 24
+hours after an interrupted CLI.
 
 Convex HTTP routers currently expose GET but not HEAD routes. Uptime monitors
 must use a lightweight GET request.
