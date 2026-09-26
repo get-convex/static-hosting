@@ -275,6 +275,7 @@ npx @convex-dev/static-hosting upload [options]
   -d, --dist <path>         Path to dist directory (default: ./dist)
   -c, --component <name>    Component instance name (default: staticHosting)
       --prod                Deploy to production deployment
+      --preview-name <name> Upload to the named preview deployment
   -b, --build               Run 'npm run build' with VITE_CONVEX_URL set
       --build-command <cmd> Override the build command; implies --build
       --no-spa              Disable SPA fallback (404 instead of /index.html)

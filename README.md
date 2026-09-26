@@ -231,6 +231,7 @@ npx @convex-dev/static-hosting upload [options]
   -d, --dist <path>         Path to dist directory (default: ./dist)
   -c, --component <name>    Component instance name (default: staticHosting)
       --prod                Deploy to production deployment
+      --preview-name <name> Upload to the named preview deployment
   -b, --build               Run 'npm run build' with VITE_CONVEX_URL set
       --build-command <cmd> Override the build command; implies --build
       --no-spa              Disable SPA fallback (404 instead of /index.html)
@@ -239,6 +240,10 @@ npx @convex-dev/static-hosting upload [options]
       --cdn-delete-function Legacy app function that deletes CDN blobs
   -j, --concurrency <n>     Parallel upload workers (default: 5)
 ```
+
+`--preview-name` selects the deployment the same way as
+`npx convex run --preview-name`, so a dev or production `CONVEX_DEPLOY_KEY`
+takes precedence over it.
 
 Each upload is published atomically, so visitors never see a page that refers to
 assets that are not available yet. Failed uploads leave the previous deployment
