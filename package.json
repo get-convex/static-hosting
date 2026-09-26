@@ -16,6 +16,9 @@
     "component"
   ],
   "type": "module",
+  "workspaces": [
+    "example-ssr"
+  ],
   "bin": {
     "static-hosting": "dist/cli/index.js"
   },
@@ -24,6 +27,7 @@
     "dev:backend": "convex dev --typecheck-components",
     "dev:frontend": "cd example && vite --clearScreen false",
     "build:example": "cd example && vite build",
+    "build:example:ssr": "npm run build -w example-ssr",
     "upload:static": "node dist/cli/index.js upload --dist ./example/dist --component staticHosting",
     "deploy:static": "node dist/cli/index.js deploy --dist ./example/dist --component staticHosting --build-command \"npm run build:example\"",
     "dev:build": "chokidar 'tsconfig*.json' 'src/**/*.ts' -i '**/*.test.ts' -c 'npm run build:codegen' --initial",
@@ -31,7 +35,7 @@
     "build": "tsc --build ./tsconfig.build.json --force",
     "build:codegen": "npx convex codegen --component-dir ./src/component && npm run build",
     "build:clean": "rm -rf dist *.tsbuildinfo && npm run build:codegen",
-    "typecheck": "tsc --noEmit && tsc -p example && tsc -p example/convex",
+    "typecheck": "tsc --noEmit && tsc -p example && tsc -p example/convex && tsc -p example-ssr && tsc -p example-ssr/convex",
     "lint": "eslint .",
     "all": "run-p -r 'dev:*' 'test:watch'",
     "test": "vitest run --typecheck",

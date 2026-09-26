@@ -275,6 +275,7 @@ npx @convex-dev/static-hosting upload [options]
   -d, --dist <path>         Path to dist directory (default: ./dist)
   -c, --component <name>    Component instance name (default: staticHosting)
       --prod                Deploy to production deployment
+      --preview-name <name> Upload to the named preview deployment
   -b, --build               Run 'npm run build' with VITE_CONVEX_URL set
       --build-command <cmd> Override the build command; implies --build
       --no-spa              Disable SPA fallback (404 instead of /index.html)
@@ -286,13 +287,16 @@ npx @convex-dev/static-hosting upload [options]
 
 The complete manifest is staged in small, portable command-line chunks after all
 uploads finish. One final mutation atomically publishes the manifest and
-deployment settings. Old component storage is removed immediately afterward in
-bounded cleanup transactions. A failed attempt leaves the previous deployment
-live and removes only new files that are not referenced by the live manifest.
-The supported maximum is 1,800 files and 2 MiB of serialized manifest metadata,
-which keeps the atomic switch below Convex transaction limits. Upload URLs are
-generated in bounded batches. Later uploads recover component files and staging
-records left unreferenced for more than 24 hours after an interrupted CLI.
+deployment settings. Replaced files stay in component storage for seven days: a
+request for a missing file with an extension, except HTML, gets the newest
+replaced copy, so pages that are already open can still load their scripts.
+Later uploads remove expired files in bounded cleanup transactions. A failed
+attempt leaves the previous deployment live and removes only new files that are
+not referenced by the live manifest. The supported maximum is 1,800 files and 2
+MiB of serialized manifest metadata, which keeps the atomic switch below Convex
+transaction limits. Upload URLs are generated in bounded batches. Later uploads
+recover component files and staging records left unreferenced for more than 24
+hours after an interrupted CLI.
 
 Convex HTTP routers currently expose GET but not HEAD routes. Uptime monitors
 must use a lightweight GET request.
@@ -397,6 +401,23 @@ Registers a static catch-all in the app's `convex/http.ts`. Use it when exact
 app routes must remain at the same root. `pathPrefix`, `spaFallback`, and
 `cdnBaseUrl` are supported. The component must be installed without an
 `httpPrefix` so only the app owns that URL space.
+
+### `serveStaticAsset(ctx, component, request, options?)`
+
+Serves an uploaded file from an app-owned HTTP action, or returns `null` when no
+file matches so the action can continue with its own routing (server rendering,
+prerendered pages, redirects). Responses match `registerStaticRoutes`. The
+lookup is exact: `/` is not mapped to `/index.html`, and `spaFallback` defaults
+to `false`. `path` (the decoded file path, defaulting to the decoded request
+path, starting with `/` and without your route's prefix), `spaFallback`, and
+`cdnBaseUrl` are supported. A request path with malformed percent-encoding
+returns `null`. A found file whose storage can't be read gets a 500 response.
+The component must be installed without an `httpPrefix`.
+
+### `decodeRequestPath(pathname)`
+
+Decodes a URL pathname the way the static handlers do. Returns `null` for
+malformed percent-encoding.
 
 ### `exposeDeploymentQuery(component)`
 

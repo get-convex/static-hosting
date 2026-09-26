@@ -1,6 +1,8 @@
 import {
   httpActionGeneric,
   queryGeneric,
+  type GenericActionCtx,
+  type GenericDataModel,
   type HttpRouter,
 } from "convex/server";
 import { v, type GenericId } from "convex/values";
@@ -21,6 +23,14 @@ const deploymentInfoValidator = v.object({
   deployedAt: v.number(),
   spaFallback: v.optional(v.boolean()),
 });
+
+type CdnBaseUrl = string | ((request: Request) => string);
+
+/** The parts of an action context needed to serve a static file. */
+type AssetServingCtx = Pick<
+  GenericActionCtx<GenericDataModel>,
+  "runQuery" | "storage"
+>;
 
 /**
  * Register app-owned HTTP routes for static hosting.
@@ -56,7 +66,7 @@ export function registerStaticRoutes(
     /** Override the deployment's SPA fallback setting. */
     spaFallback?: boolean;
     /** Optional custom base URL for convex-fs blob redirects. */
-    cdnBaseUrl?: string | ((request: Request) => string);
+    cdnBaseUrl?: CdnBaseUrl;
   } = {},
 ) {
   if (!pathPrefix.startsWith("/")) {
@@ -67,8 +77,7 @@ export function registerStaticRoutes(
     pathPrefix === "/" ? "" : pathPrefix.replace(/\/$/, "");
 
   const serveStaticFile = httpActionGeneric(async (ctx, request) => {
-    const url = new URL(request.url);
-    const decodedPath = decodeRequestPath(url.pathname);
+    const decodedPath = decodeRequestPath(new URL(request.url).pathname);
     if (decodedPath === null) {
       return new Response("Bad Request", {
         status: 400,
@@ -84,126 +93,25 @@ export function registerStaticRoutes(
       path = "/index.html";
     }
 
-    const asset = await ctx.runQuery(component.lib.resolveAssetForHttp, {
-      path,
-      ...(spaFallback === undefined ? {} : { spaFallback }),
+    const response = await serveAsset(ctx, component, request, path, {
+      spaFallback,
+      cdnBaseUrl,
     });
+    if (response) return response;
 
-    if (!asset) {
-      if (path === "/index.html") {
-        return new Response(getSetupHtml(), {
-          status: 503,
-          headers: {
-            "Content-Type": "text/html; charset=utf-8",
-            "Cache-Control": "no-store",
-            "Retry-After": "5",
-          },
-        });
-      }
-      return new Response("Not Found", {
-        status: 404,
-        headers: { "Content-Type": "text/plain" },
-      });
-    }
-
-    const contentType = asset.contentType || getMimeType(path);
-    const cacheControl = cacheControlFor(path);
-
-    if (asset.blobId && !isHtmlContentType(contentType)) {
-      const configuredBase =
-        typeof cdnBaseUrl === "function" ? cdnBaseUrl(request) : cdnBaseUrl;
-      const baseUrl = configuredBase ?? `${url.origin}/fs/blobs`;
-      return new Response(null, {
-        status: 302,
+    if (path === "/index.html") {
+      return new Response(getSetupHtml(), {
+        status: 503,
         headers: {
-          Location: `${baseUrl.replace(/\/$/, "")}/${asset.blobId}`,
-          "Cache-Control": cacheControl,
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+          "Retry-After": "5",
         },
       });
     }
-
-    // TODO(remove in a future major): v1→v2 transitional path. The file still
-    // lives in the app's own storage (a same-name migration inherited the v1
-    // row; see the component's resolveAssetForHttp). Serve it directly from app
-    // storage so the site stays up during migration with no re-upload. Once v1
-    // app-storage assets are no longer supported, delete this branch.
-    if (asset.appStorageId) {
-      if (
-        asset.etag &&
-        etagMatches(request.headers.get("If-None-Match"), asset.etag)
-      ) {
-        return new Response(null, {
-          status: 304,
-          headers: { ETag: asset.etag, "Cache-Control": cacheControl },
-        });
-      }
-      const blob = await ctx.storage.get(
-        asset.appStorageId as GenericId<"_storage">,
-      );
-      if (!blob) {
-        // The component surfaces appStorageId whenever it can't resolve a
-        // storage URL, which also covers a genuinely deleted file (the two are
-        // indistinguishable from the component). If it isn't in app storage
-        // either, degrade like an empty deployment rather than erroring.
-        if (path === "/index.html") {
-          return new Response(getSetupHtml(), {
-            status: 503,
-            headers: {
-              "Content-Type": "text/html; charset=utf-8",
-              "Cache-Control": "no-store",
-              "Retry-After": "5",
-            },
-          });
-        }
-        return new Response("Not Found", {
-          status: 404,
-          headers: { "Content-Type": "text/plain" },
-        });
-      }
-      return new Response(blob, {
-        status: 200,
-        headers: {
-          "Content-Type": contentType,
-          "Cache-Control": cacheControl,
-          ...(asset.etag ? { ETag: asset.etag } : {}),
-          "X-Content-Type-Options": "nosniff",
-        },
-      });
-    }
-
-    if (!asset.storageUrl) {
-      return new Response("Asset not available", {
-        status: 500,
-        headers: { "Content-Type": "text/plain" },
-      });
-    }
-
-    if (
-      asset.etag &&
-      etagMatches(request.headers.get("If-None-Match"), asset.etag)
-    ) {
-      return new Response(null, {
-        status: 304,
-        headers: { ETag: asset.etag, "Cache-Control": cacheControl },
-      });
-    }
-
-    const storageResponse = await fetch(asset.storageUrl);
-    if (!storageResponse.ok || !storageResponse.body) {
-      return new Response("Storage error", {
-        status: 500,
-        headers: { "Content-Type": "text/plain" },
-      });
-    }
-
-    return new Response(storageResponse.body, {
-      status: 200,
-      headers: {
-        "Content-Type": contentType,
-        "Cache-Control": cacheControl,
-        ...(asset.etag ? { ETag: asset.etag } : {}),
-        "X-Content-Type-Options": "nosniff",
-      },
+    return new Response("Not Found", {
+      status: 404,
+      headers: { "Content-Type": "text/plain" },
     });
   });
 
@@ -220,6 +128,183 @@ export function registerStaticRoutes(
       handler: serveStaticFile,
     });
   }
+}
+
+/**
+ * Serve an uploaded static file from your own HTTP action, or return null when
+ * no file matches so the action can continue with its own routing: server
+ * rendering, prerendered pages, redirects.
+ *
+ * Found files get the same response as `registerStaticRoutes`: content type,
+ * cache headers, ETag revalidation, and legacy CDN redirects. A found file
+ * whose storage can't be read gets a 500 response. A request path with
+ * malformed percent-encoding matches no file, so it returns null.
+ *
+ * The lookup is exact by default. `/` is not mapped to `/index.html`, and there
+ * is no SPA fallback, so the SPA shell never answers for a route your action
+ * handles. To serve the shell, pass `{ path: "/index.html" }`. When your route
+ * has a prefix, pass `path` with the prefix removed.
+ *
+ * @example
+ * ```typescript
+ * // convex/http.ts
+ * const http = httpRouter();
+ * http.route({
+ *   pathPrefix: "/",
+ *   method: "GET",
+ *   handler: httpAction(async (ctx, request) => {
+ *     const file = await serveStaticAsset(ctx, components.staticHosting, request);
+ *     if (file) return file;
+ *     return await renderPage(request);
+ *   }),
+ * });
+ * export default http;
+ * ```
+ */
+export async function serveStaticAsset(
+  ctx: AssetServingCtx,
+  component: ComponentApi,
+  request: Request,
+  {
+    path,
+    spaFallback = false,
+    cdnBaseUrl,
+  }: {
+    /**
+     * Decoded file path to look up, starting with `/`, such as
+     * `/about/index.html`. Defaults to the decoded request path.
+     */
+    path?: string;
+    /** Serve `/index.html` for a missing path without a file extension. */
+    spaFallback?: boolean;
+    /** Optional custom base URL for convex-fs blob redirects. */
+    cdnBaseUrl?: CdnBaseUrl;
+  } = {},
+): Promise<Response | null> {
+  if (path !== undefined && !path.startsWith("/")) {
+    throw new Error("path must start with /");
+  }
+  const filePath = path ?? decodeRequestPath(new URL(request.url).pathname);
+  if (filePath === null) return null;
+  return await serveAsset(ctx, component, request, filePath, {
+    spaFallback,
+    cdnBaseUrl,
+  });
+}
+
+export { decodeRequestPath };
+
+/**
+ * Serve the uploaded file at `path` (decoded, relative to the mount prefix),
+ * or return null when no file matches. An undefined `spaFallback` uses the
+ * deployment's stored setting.
+ */
+async function serveAsset(
+  ctx: AssetServingCtx,
+  component: ComponentApi,
+  request: Request,
+  path: string,
+  {
+    spaFallback,
+    cdnBaseUrl,
+  }: {
+    spaFallback: boolean | undefined;
+    cdnBaseUrl: CdnBaseUrl | undefined;
+  },
+): Promise<Response | null> {
+  const asset = await ctx.runQuery(component.lib.resolveAssetForHttp, {
+    path,
+    ...(spaFallback === undefined ? {} : { spaFallback }),
+  });
+  if (!asset) return null;
+
+  const contentType = asset.contentType || getMimeType(path);
+  const cacheControl = cacheControlFor(path);
+
+  if (asset.blobId && !isHtmlContentType(contentType)) {
+    const configuredBase =
+      typeof cdnBaseUrl === "function" ? cdnBaseUrl(request) : cdnBaseUrl;
+    const baseUrl = configuredBase ?? `${new URL(request.url).origin}/fs/blobs`;
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: `${baseUrl.replace(/\/$/, "")}/${asset.blobId}`,
+        "Cache-Control": cacheControl,
+      },
+    });
+  }
+
+  // TODO(remove in a future major): v1→v2 transitional path. The file still
+  // lives in the app's own storage (a same-name migration inherited the v1
+  // row; see the component's resolveAssetForHttp). Serve it directly from app
+  // storage so the site stays up during migration with no re-upload. Once v1
+  // app-storage assets are no longer supported, delete this branch.
+  if (asset.appStorageId) {
+    if (
+      asset.etag &&
+      etagMatches(request.headers.get("If-None-Match"), asset.etag)
+    ) {
+      return new Response(null, {
+        status: 304,
+        headers: { ETag: asset.etag, "Cache-Control": cacheControl },
+      });
+    }
+    const blob = await ctx.storage.get(
+      asset.appStorageId as GenericId<"_storage">,
+    );
+    if (!blob) {
+      // The component surfaces appStorageId whenever it can't resolve a
+      // storage URL, which also covers a genuinely deleted file (the two are
+      // indistinguishable from the component). If it isn't in app storage
+      // either, treat it as missing, like an empty deployment, rather than
+      // erroring.
+      return null;
+    }
+    return new Response(blob, {
+      status: 200,
+      headers: {
+        "Content-Type": contentType,
+        "Cache-Control": cacheControl,
+        ...(asset.etag ? { ETag: asset.etag } : {}),
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
+  }
+
+  if (!asset.storageUrl) {
+    return new Response("Asset not available", {
+      status: 500,
+      headers: { "Content-Type": "text/plain" },
+    });
+  }
+
+  if (
+    asset.etag &&
+    etagMatches(request.headers.get("If-None-Match"), asset.etag)
+  ) {
+    return new Response(null, {
+      status: 304,
+      headers: { ETag: asset.etag, "Cache-Control": cacheControl },
+    });
+  }
+
+  const storageResponse = await fetch(asset.storageUrl);
+  if (!storageResponse.ok || !storageResponse.body) {
+    return new Response("Storage error", {
+      status: 500,
+      headers: { "Content-Type": "text/plain" },
+    });
+  }
+
+  return new Response(storageResponse.body, {
+    status: 200,
+    headers: {
+      "Content-Type": contentType,
+      "Cache-Control": cacheControl,
+      ...(asset.etag ? { ETag: asset.etag } : {}),
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
 }
 
 /**

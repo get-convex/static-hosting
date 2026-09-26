@@ -6,6 +6,28 @@ import {
 } from "./args.js";
 
 describe("CLI argument parsing", () => {
+  test("targets named preview uploads without selecting production", () => {
+    expect(parseUploadArgs([])).toMatchObject({
+      prod: false,
+      previewName: null,
+    });
+    expect(
+      parseUploadArgs(["--preview-name", "feature-routing"]),
+    ).toMatchObject({
+      prod: false,
+      previewName: "feature-routing",
+    });
+  });
+
+  test.each([
+    ["--prod", "--preview-name", "feature-routing"],
+    ["--preview-name", "feature-routing", "--prod"],
+  ])("rejects conflicting upload destinations: %s", (...args) => {
+    expect(() => parseUploadArgs(args)).toThrow(
+      "--prod and --preview-name cannot be combined",
+    );
+  });
+
   test("parses and forwards deploy upload options exactly", () => {
     const parsed = parseDeployArgs([
       "--dist",
@@ -53,6 +75,11 @@ describe("CLI argument parsing", () => {
   });
 
   test.each([
+    ["missing preview name", () => parseUploadArgs(["--preview-name"])],
+    [
+      "invalid preview name",
+      () => parseUploadArgs(["--preview-name", "--prod"]),
+    ],
     ["upload", () => parseUploadArgs(["--dist", "--prod"])],
     ["deploy", () => parseDeployArgs(["--cdn-delete-function", "--no-spa"])],
     ["unknown upload", () => parseUploadArgs(["--wat"])],

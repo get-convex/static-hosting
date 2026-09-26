@@ -1,0 +1,27 @@
+{
+  "name": "static-hosting-example-ssr",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "npm run build && convex dev --start \"npm run dev:assets\"",
+    "dev:assets": "chokidar \"src/**\" \"adapter/**\" \"public/**\" vite.config.ts -i src/routeTree.gen.ts --initial --debounce 500 --silent -c \"npm run build && npm run upload\"",
+    "upload": "static-hosting upload --dist ./dist/client --no-spa"
+  },
+  "dependencies": {
+    "@convex-dev/react-query": "0.1.0",
+    "@convex-dev/static-hosting": "file:..",
+    "@tanstack/react-query": "5.103.1",
+    "@tanstack/react-router": "1.170.38",
+    "@tanstack/react-router-ssr-query": "1.167.3",
+    "@tanstack/react-start": "1.168.56",
+    "convex": "1.39.1",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.1.1",
+    "chokidar-cli": "3.0.0",
+    "vite": "7.2.6"
+  }
+}
