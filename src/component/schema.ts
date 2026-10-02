@@ -13,6 +13,20 @@ export default defineSchema({
     .index("by_deploymentId", ["deploymentId"])
     .index("by_storageId", ["storageId"]),
 
+  // Publication moves replaced storage files here. Missing non-HTML paths with
+  // an extension can still resolve to these files. A later upload removes them
+  // after expiresAt, at least seven days after replacement.
+  retiredAssets: defineTable({
+    path: v.string(),
+    storageId: v.id("_storage"),
+    contentType: v.string(),
+    deploymentId: v.string(),
+    expiresAt: v.number(),
+  })
+    .index("by_path", ["path"])
+    .index("by_storageId", ["storageId"])
+    .index("by_expiresAt", ["expiresAt"]),
+
   // Uploads stage their manifest in small chunks because the Convex CLI takes
   // function arguments on the command line. Only publishDeployment copies a
   // complete staged manifest into staticAssets, so partial uploads are never

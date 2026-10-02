@@ -299,6 +299,16 @@ describe("component lib", () => {
       expect(await ctx.storage.get(oldStorageId)).not.toBeNull();
       expect(await ctx.storage.get(newStorageId)).not.toBeNull();
     });
+    // The replaced file is kept for seven days, so open pages can still load it.
+    expect(await t.mutation(internal.lib.cleanupPendingStorage, {})).toEqual({
+      processed: 0,
+      deleted: 0,
+      needsAnotherPass: false,
+    });
+    await t.run(async (ctx) => {
+      expect(await ctx.storage.get(oldStorageId)).not.toBeNull();
+    });
+    vi.advanceTimersByTime(7 * 24 * 60 * 60 * 1000);
     expect(await t.mutation(internal.lib.cleanupPendingStorage, {})).toEqual({
       processed: 1,
       deleted: 1,
@@ -807,6 +817,92 @@ describe("component lib", () => {
         ],
       }),
     ).rejects.toThrow("Duplicate asset path");
+  });
+
+  describe("replaced files", () => {
+    const sevenDays = 7 * 24 * 60 * 60 * 1000;
+
+    async function publish(
+      t: ReturnType<typeof initConvexTest>,
+      deploymentId: string,
+      paths: string[],
+    ) {
+      const assets = await t.run(async (ctx) => {
+        const result = [];
+        for (const path of ["/index.html", ...paths]) {
+          result.push({
+            path,
+            storageId: await ctx.storage.store(new Blob([deploymentId + path])),
+            contentType: path.endsWith(".html")
+              ? "text/html; charset=utf-8"
+              : "application/javascript; charset=utf-8",
+            deploymentId,
+          });
+        }
+        return result;
+      });
+      await t.mutation(internal.lib.stageAssets, { assets });
+      await t.mutation(internal.lib.publishDeployment, {
+        currentDeploymentId: deploymentId,
+        expectedAssetCount: assets.length,
+      });
+      return new Map(assets.map((asset) => [asset.path, asset.storageId]));
+    }
+
+    test("serves a replaced file, but never replaced HTML, for seven days", async () => {
+      const t = initConvexTest();
+      const a = await publish(t, "deploy-a", [
+        "/assets/app-A1b2C3d4.js",
+        "/about.html",
+      ]);
+      const b = await publish(t, "deploy-b", ["/assets/app-E5f6G7h8.js"]);
+
+      const resolve = (path: string) =>
+        t.query(api.lib.resolveAssetForHttp, { path });
+      expect(await resolve("/assets/app-A1b2C3d4.js")).toMatchObject({
+        etag: `"${a.get("/assets/app-A1b2C3d4.js")}"`,
+      });
+      expect(await resolve("/about.html")).toBeNull();
+      // Paths without an extension still get the current SPA shell.
+      expect(await resolve("/dashboard")).toMatchObject({
+        etag: `"${b.get("/index.html")}"`,
+      });
+
+      vi.advanceTimersByTime(sevenDays);
+      await t.mutation(internal.lib.cleanupPendingStorage, {});
+      expect(await resolve("/assets/app-A1b2C3d4.js")).toBeNull();
+      await t.run(async (ctx) => {
+        expect(
+          await ctx.storage.get(a.get("/assets/app-A1b2C3d4.js")!),
+        ).toBeNull();
+      });
+    });
+
+    test("no cleanup deletes a replaced file before it expires", async () => {
+      const t = initConvexTest();
+      const a = await publish(t, "deploy-a", ["/assets/app-A1b2C3d4.js"]);
+      await publish(t, "deploy-b", []);
+      const retired = a.get("/assets/app-A1b2C3d4.js")!;
+      // Old enough for every cleanup to consider it, young enough to keep.
+      vi.advanceTimersByTime(2 * 24 * 60 * 60 * 1000);
+
+      await t.mutation(internal.lib.cleanupPendingStorage, {});
+      await t.mutation(internal.lib.cleanupUnreferencedStorage, {});
+      expect(
+        await t.mutation(internal.lib.deleteUploadedFiles, {
+          storageIds: [retired],
+        }),
+      ).toMatchObject({ stillReferenced: 1 });
+
+      await t.run(async (ctx) => {
+        expect(await ctx.storage.get(retired)).not.toBeNull();
+      });
+      expect(
+        await t.query(api.lib.resolveAssetForHttp, {
+          path: "/assets/app-A1b2C3d4.js",
+        }),
+      ).not.toBeNull();
+    });
   });
 
   describe("resolveAsset", () => {
