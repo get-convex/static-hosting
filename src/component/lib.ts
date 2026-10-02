@@ -1,4 +1,4 @@
-import { v, type Infer } from "convex/values";
+import { v } from "convex/values";
 import {
   internalMutation,
   internalQuery,
@@ -7,7 +7,7 @@ import {
   type QueryCtx,
 } from "./_generated/server.js";
 import type { Id } from "./_generated/dataModel.js";
-import { hasFileExtension, isHtmlContentType } from "./serving.js";
+import { hasFileExtension } from "./serving.js";
 
 const staticAssetValidator = v.object({
   _id: v.id("staticAssets"),
@@ -18,15 +18,6 @@ const staticAssetValidator = v.object({
   contentType: v.string(),
   deploymentId: v.string(),
 });
-
-const resolvedAssetValidator = v.union(
-  staticAssetValidator,
-  staticAssetValidator.omit("_id").extend({
-    _id: v.id("retiredAssets"),
-    storageId: v.id("_storage"),
-    expiresAt: v.number(),
-  }),
-);
 
 const deploymentInfoValidator = v.object({
   _id: v.id("deploymentInfo"),
@@ -46,7 +37,6 @@ const MAINTENANCE_PAGE_LIMIT = 256;
 // staged lookups use an explicit budget below Convex's 4,096 read limit.
 const STORAGE_SCAN_LIMIT = 2000;
 const ABANDONED_UPLOAD_AGE_MS = 24 * 60 * 60 * 1000;
-const RETIRED_ASSET_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 const httpAssetValidator = v.object({
   storageUrl: v.optional(v.string()),
@@ -65,25 +55,14 @@ async function resolveAssetDocument(
   ctx: QueryCtx,
   path: string,
   spaFallbackOverride?: boolean,
-): Promise<Infer<typeof resolvedAssetValidator> | null> {
+) {
   const exact = await ctx.db
     .query("staticAssets")
     .withIndex("by_path", (q) => q.eq("path", path))
     .unique();
   if (exact) return exact;
 
-  if (hasFileExtension(path)) {
-    // A file the current deployment replaced stays reachable for a while, so
-    // pages that are already open can still load their scripts. Old HTML never
-    // comes back.
-    const retired = await ctx.db
-      .query("retiredAssets")
-      .withIndex("by_path", (q) => q.eq("path", path))
-      .order("desc")
-      .first();
-    if (retired && !isHtmlContentType(retired.contentType)) return retired;
-    return null;
-  }
+  if (hasFileExtension(path)) return null;
 
   const info = await ctx.db.query("deploymentInfo").first();
   const spaFallback = spaFallbackOverride ?? info?.spaFallback ?? true;
@@ -96,11 +75,6 @@ async function resolveAssetDocument(
 }
 
 async function deleteStorageFile(ctx: MutationCtx, storageId: Id<"_storage">) {
-  const retiredReference = await ctx.db
-    .query("retiredAssets")
-    .withIndex("by_storageId", (q) => q.eq("storageId", storageId))
-    .first();
-  if (retiredReference) return false;
   // A v2 component mounted with the old `selfHosting` name can inherit v1 rows
   // containing app-owned storage IDs. They are deliberately invisible in the
   // component namespace. Checking metadata avoids relying on backend error text
@@ -226,7 +200,7 @@ export const getByPath = internalQuery({
 // index.html asset. Doing the fallback here keeps it to a single query.
 export const resolveAsset = internalQuery({
   args: { path: v.string() },
-  returns: v.union(resolvedAssetValidator, v.null()),
+  returns: v.union(staticAssetValidator, v.null()),
   handler: async (ctx, { path }) => {
     return await resolveAssetDocument(ctx, path);
   },
@@ -331,48 +305,24 @@ export const cleanupPendingStorage = internalMutation({
       limit ?? MAINTENANCE_PAGE_LIMIT,
       MAINTENANCE_PAGE_LIMIT,
     );
-    const expired = await ctx.db
-      .query("retiredAssets")
-      .withIndex("by_expiresAt", (q) => q.lte("expiresAt", Date.now()))
-      .take(batchLimit);
-    for (const asset of expired) {
-      if (asset.storageId) {
-        await ctx.db.insert("pendingStorageCleanup", {
-          storageId: asset.storageId,
-        });
-      }
-      await ctx.db.delete("retiredAssets", asset._id);
-    }
     const entries = await ctx.db
       .query("pendingStorageCleanup")
       .take(batchLimit);
     let deleted = 0;
     for (const entry of entries) {
-      const [liveReference, stagedReference, retiredReference] =
-        await Promise.all([
-          ctx.db
-            .query("staticAssets")
-            .withIndex("by_storageId", (q) =>
-              q.eq("storageId", entry.storageId),
-            )
-            .first(),
-          ctx.db
-            .query("stagedAssets")
-            .withIndex("by_storageId", (q) =>
-              q.eq("storageId", entry.storageId),
-            )
-            .first(),
-          ctx.db
-            .query("retiredAssets")
-            .withIndex("by_storageId", (q) =>
-              q.eq("storageId", entry.storageId),
-            )
-            .first(),
-        ]);
+      const [liveReference, stagedReference] = await Promise.all([
+        ctx.db
+          .query("staticAssets")
+          .withIndex("by_storageId", (q) => q.eq("storageId", entry.storageId))
+          .first(),
+        ctx.db
+          .query("stagedAssets")
+          .withIndex("by_storageId", (q) => q.eq("storageId", entry.storageId))
+          .first(),
+      ]);
       if (
         !liveReference &&
         !stagedReference &&
-        !retiredReference &&
         (await deleteStorageFile(ctx, entry.storageId))
       ) {
         deleted++;
@@ -382,8 +332,7 @@ export const cleanupPendingStorage = internalMutation({
     return {
       processed: entries.length,
       deleted,
-      needsAnotherPass:
-        entries.length === batchLimit || expired.length === batchLimit,
+      needsAnotherPass: entries.length === batchLimit,
     };
   },
 });
@@ -408,11 +357,7 @@ export const deleteUploadedFiles = internalMutation({
     let alreadyMissing = 0;
     let stillReferenced = 0;
     for (const storageId of storageIds) {
-      const retiredReference = await ctx.db
-        .query("retiredAssets")
-        .withIndex("by_storageId", (q) => q.eq("storageId", storageId))
-        .first();
-      if (referencedStorageIds.has(storageId) || retiredReference) {
+      if (referencedStorageIds.has(storageId)) {
         stillReferenced++;
         continue;
       }
@@ -553,20 +498,11 @@ export const cleanupAbandonedStaging = internalMutation({
     let queuedBlobIds = 0;
     for (const asset of assets) {
       if (asset.storageId) {
-        const storageId = asset.storageId;
         const liveReference = await ctx.db
           .query("staticAssets")
           .withIndex("by_storageId", (q) => q.eq("storageId", asset.storageId))
           .first();
-        const retiredReference = await ctx.db
-          .query("retiredAssets")
-          .withIndex("by_storageId", (q) => q.eq("storageId", storageId))
-          .first();
-        if (
-          !liveReference &&
-          !retiredReference &&
-          (await deleteStorageFile(ctx, asset.storageId))
-        ) {
+        if (!liveReference && (await deleteStorageFile(ctx, asset.storageId))) {
           deletedFiles++;
         }
       }
@@ -634,20 +570,16 @@ export const cleanupUnreferencedStorage = internalMutation({
       }
       scanned++;
       if (liveStorageIds.has(file._id)) continue;
-      if (stagedLookups + 2 > stagedLookupBudget) {
+      if (stagedLookups >= stagedLookupBudget) {
         stoppedForReadBudget = true;
         break;
       }
-      stagedLookups += 2;
+      stagedLookups++;
       const stagedReference = await ctx.db
         .query("stagedAssets")
         .withIndex("by_storageId", (q) => q.eq("storageId", file._id))
         .first();
-      const retiredReference = await ctx.db
-        .query("retiredAssets")
-        .withIndex("by_storageId", (q) => q.eq("storageId", file._id))
-        .first();
-      if (!stagedReference && !retiredReference) {
+      if (!stagedReference) {
         await ctx.storage.delete(file._id);
         deleted++;
       }
@@ -657,9 +589,8 @@ export const cleanupUnreferencedStorage = internalMutation({
       deleted,
       needsAnotherPass:
         deleted === deleteLimit ||
-        // Without deletes, another pass would inspect the same protected prefix.
-        (deleted > 0 &&
-          (stoppedForReadBudget || files.length === STORAGE_SCAN_LIMIT)),
+        stoppedForReadBudget ||
+        (deleted > 0 && files.length === STORAGE_SCAN_LIMIT),
     };
   },
 });
@@ -821,25 +752,9 @@ export const publishDeployment = internalMutation({
         `The old and new manifests contain more than ${MAX_PUBLISH_MANIFEST_READS} rows combined. Reduce the new build or clean up the legacy manifest before migrating.`,
       );
     }
-    const retiredAssets = oldAssets.flatMap((asset) => {
-      if (asset.storageId !== undefined && asset.blobId === undefined) {
-        return [
-          {
-            _id: asset._id,
-            path: asset.path,
-            storageId: asset.storageId,
-            contentType: asset.contentType,
-            deploymentId: asset.deploymentId,
-          },
-        ];
-      }
-      return [];
-    });
-    const retiredIds = new Set(retiredAssets.map((asset) => asset._id));
     const blobIds: string[] = [];
     const storageIds = new Set<Id<"_storage">>();
     for (const asset of oldAssets) {
-      if (retiredIds.has(asset._id)) continue;
       if (asset.blobId) blobIds.push(asset.blobId);
       if (asset.storageId) storageIds.add(asset.storageId);
     }
@@ -849,7 +764,6 @@ export const publishDeployment = internalMutation({
       blobIds.length +
       assets.length +
       stagedAssets.length +
-      retiredAssets.length +
       2;
     if (plannedDocumentWrites > MAX_PUBLISH_DOCUMENT_WRITES) {
       throw new Error(
@@ -859,13 +773,6 @@ export const publishDeployment = internalMutation({
 
     for (const asset of oldAssets) {
       await ctx.db.delete("staticAssets", asset._id);
-    }
-
-    for (const { _id, ...asset } of retiredAssets) {
-      await ctx.db.insert("retiredAssets", {
-        ...asset,
-        expiresAt: Date.now() + RETIRED_ASSET_AGE_MS,
-      });
     }
 
     for (const asset of assets) {
