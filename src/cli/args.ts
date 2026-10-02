@@ -2,6 +2,7 @@ export interface UploadArgs {
   dist: string;
   component: string;
   prod: boolean;
+  previewName: string | null;
   build: boolean;
   buildCommand: string;
   cdn: boolean;
@@ -36,6 +37,7 @@ export function parseUploadArgs(args: string[]): UploadArgs {
     dist: "./dist",
     component: "staticHosting",
     prod: false,
+    previewName: null,
     build: false,
     buildCommand: "npm run build",
     cdn: false,
@@ -54,6 +56,9 @@ export function parseUploadArgs(args: string[]): UploadArgs {
       i++;
     } else if (arg === "--component" || arg === "-c") {
       result.component = optionValue(args, i, arg);
+      i++;
+    } else if (arg === "--preview-name") {
+      result.previewName = optionValue(args, i, arg);
       i++;
     } else if (arg === "--prod") {
       result.prod = true;
@@ -86,6 +91,8 @@ export function parseUploadArgs(args: string[]): UploadArgs {
       throw new Error(`Unknown upload option: ${arg}`);
     }
   }
+  if (result.prod && result.previewName !== null)
+    throw new Error("--prod and --preview-name cannot be combined");
   return result;
 }
 

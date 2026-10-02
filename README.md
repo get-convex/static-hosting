@@ -231,6 +231,7 @@ npx @convex-dev/static-hosting upload [options]
   -d, --dist <path>         Path to dist directory (default: ./dist)
   -c, --component <name>    Component instance name (default: staticHosting)
       --prod                Deploy to production deployment
+      --preview-name <name> Upload to the named preview deployment
   -b, --build               Run 'npm run build' with VITE_CONVEX_URL set
       --build-command <cmd> Override the build command; implies --build
       --no-spa              Disable SPA fallback (404 instead of /index.html)
@@ -239,6 +240,10 @@ npx @convex-dev/static-hosting upload [options]
       --cdn-delete-function Legacy app function that deletes CDN blobs
   -j, --concurrency <n>     Parallel upload workers (default: 5)
 ```
+
+`--preview-name` selects the deployment the same way as
+`npx convex run --preview-name`, so a dev or production `CONVEX_DEPLOY_KEY`
+takes precedence over it.
 
 Each upload is published atomically, so visitors never see a page that refers to
 assets that are not available yet. Failed uploads leave the previous deployment
@@ -355,6 +360,79 @@ The setting is stored with the deployment, so it travels with the code you ship
 rather than living in a separate env var. Requests for paths with an extension
 (e.g. `/missing.js`) always 404 when not found, regardless of this setting.
 
+## Custom routing (SSR, prerendered pages)
+
+`registerStaticRoutes` decides what every unmatched path returns. When your app
+needs to decide instead, for example to server-render pages, serve prerendered
+pages next to an SPA shell, or redirect to canonical URLs, write the catch-all
+route yourself and call `serveStaticAsset` for uploaded files. Install the
+component without `httpPrefix`, as in
+[Keep existing HTTP routes at the root](#keep-existing-http-routes-at-the-root).
+
+```ts
+import { httpRouter } from "convex/server";
+import {
+  decodeRequestPath,
+  serveStaticAsset,
+} from "@convex-dev/static-hosting";
+import { components } from "./_generated/api";
+import { httpAction } from "./_generated/server";
+
+const http = httpRouter();
+
+http.route({
+  pathPrefix: "/",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const file = await serveStaticAsset(ctx, components.staticHosting, request);
+    if (file) return file;
+
+    // A missing bundle file is a 404, not a page.
+    const path = decodeRequestPath(new URL(request.url).pathname);
+    if (path === null || path.startsWith("/assets/")) {
+      return new Response("Not Found", {
+        status: 404,
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
+    return await renderPage(request);
+  }),
+});
+
+export default http;
+```
+
+`serveStaticAsset` returns the file with the same headers as
+`registerStaticRoutes`, or `null` when no file matches, including a request path
+with malformed percent-encoding. It never returns the setup page or a 404, so
+your code decides what happens next. Only a found file whose storage can't be
+read gets an error response (500). The lookup is exact: `/` is not mapped to
+`/index.html`, and SPA fallback is off unless you pass `spaFallback: true`.
+
+Pass `path` to serve a different file, such as a prerendered page or the SPA
+shell. It is the decoded path of the uploaded file, starting with `/`. If your
+route has a prefix, remove it from `path`:
+
+```ts
+const page = await serveStaticAsset(ctx, components.staticHosting, request, {
+  path: "/about/index.html",
+});
+const shell = await serveStaticAsset(ctx, components.staticHosting, request, {
+  path: "/index.html",
+});
+```
+
+When the backend renders your pages, pushing the backend and uploading files are
+separate steps, so right after a deploy a page can briefly refer to scripts that
+are not uploaded yet. That is why the missing-asset response above uses
+`Cache-Control: no-store`: a CDN would otherwise keep serving the 404.
+
+Use `decodeRequestPath` for your own path checks, so an encoded request such as
+`/%61ssets/app.js` still matches `/assets/`.
+
+See [`example-ssr/`](./example-ssr) for TanStack Start pages rendered in a
+Convex HTTP action this way.
+
 ## Upgrading from 0.1.x
 
 0.2.0 moves uploads and file storage into the component. You must remove the
@@ -386,7 +464,8 @@ steps, verification, rollback, and the optional staged cutover.
 
 ## Example
 
-See [`example/`](./example) for a complete Vite + React app.
+See [`example/`](./example) for a complete Vite + React app, and
+[`example-ssr/`](./example-ssr) for server rendering with TanStack Start.
 
 ```bash
 npm install

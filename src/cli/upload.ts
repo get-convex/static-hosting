@@ -9,6 +9,7 @@
  *   --dist <path>            Path to dist directory (default: ./dist)
  *   --component <name>       Component instance name (default: staticHosting)
  *   --prod                   Deploy to production deployment
+ *   --preview-name <name>    Upload to the named preview deployment
  *   --build                  Run the frontend build before uploading
  *   --build-command <cmd>    Override the frontend build command
  *   --spa / --no-spa         Enable or disable SPA fallback
@@ -70,6 +71,7 @@ Options:
   -d, --dist <path>           Path to dist directory (default: ./dist)
   -c, --component <name>      Static-hosting component instance name (default: staticHosting)
       --prod                  Deploy to production deployment
+      --preview-name <name>   Upload to the named preview deployment
   -b, --build                 Run the build command with VITE_CONVEX_URL +
                               STATIC_HOSTING_BASE_PATH set before uploading
       --build-command <cmd>   Build command to run (default: 'npm run build').
@@ -95,6 +97,7 @@ Examples:
 
 // Global flag for production mode
 let useProd = true;
+let previewName: string | null = null;
 const MAX_ASSETS_PER_DEPLOYMENT = 1800;
 const MAX_MANIFEST_SERIALIZED_BYTES = 2 * 1024 * 1024;
 // A Convex CLI function result can be truncated around 64 KiB. Signed upload
@@ -175,6 +178,7 @@ function convexRunAsync(
       "--typecheck=disable",
       "--codegen=disable",
       ...(useProd ? ["--prod"] : []),
+      ...(previewName === null ? [] : ["--preview-name", previewName]),
     ],
     options,
   );
@@ -802,6 +806,7 @@ async function main(): Promise<void> {
 
   // Set global prod flag
   useProd = args.prod;
+  previewName = args.previewName;
 
   // The component knows both its CONVEX_SITE_URL (where the app is served,
   // including the mount prefix) and CONVEX_CLOUD_URL (what the frontend
@@ -816,7 +821,12 @@ async function main(): Promise<void> {
   if (args.build) {
     const basePath = new URL(componentSiteUrl).pathname || "/";
 
-    const envLabel = useProd ? "production" : "development";
+    const envLabel =
+      previewName === null
+        ? useProd
+          ? "production"
+          : "development"
+        : `preview (${previewName})`;
     console.log(`🔨 Building for ${envLabel}...`);
     console.log(`   Build command: ${args.buildCommand}`);
     console.log(`   VITE_CONVEX_URL=${convexUrl}`);
@@ -889,7 +899,12 @@ async function main(): Promise<void> {
 
   await cleanUpAbandonedUploads(componentName, args.cdnDeleteFunction);
 
-  const envLabel = useProd ? "production" : "development";
+  const envLabel =
+    previewName === null
+      ? useProd
+        ? "production"
+        : "development"
+      : `preview (${previewName})`;
   console.log(`🚀 Deploying to ${envLabel} environment`);
   if (useCdn) {
     console.log("☁️  CDN mode: non-HTML assets will be uploaded to convex-fs");

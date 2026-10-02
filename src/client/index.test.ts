@@ -5,7 +5,12 @@ import {
   httpRouter,
 } from "convex/server";
 import type { ComponentApi } from "../component/_generated/component.js";
-import { exposeDeploymentQuery, registerStaticRoutes } from "./index.js";
+import {
+  decodeRequestPath,
+  exposeDeploymentQuery,
+  registerStaticRoutes,
+  serveStaticAsset,
+} from "./index.js";
 
 const components = componentsGeneric() as unknown as {
   staticHosting: ComponentApi;
@@ -135,6 +140,32 @@ describe("registerStaticRoutes", () => {
     expect(response.status).toBe(304);
     expect(storageGet).not.toHaveBeenCalled();
   });
+
+  test.each([
+    ["/", 503],
+    ["/legacy.js", 404],
+  ])(
+    "treats an inherited v1 file missing from app storage as missing: %s",
+    async (path, status) => {
+      const handler = staticHandler();
+      const runQuery = vi.fn().mockResolvedValue({
+        appStorageId: "deleted-storage-id",
+        contentType: "application/javascript; charset=utf-8",
+      });
+      const ctx = {
+        runQuery,
+        storage: { get: vi.fn().mockResolvedValue(null) },
+      };
+
+      const response = await (
+        handler as unknown as {
+          _handler: (c: typeof ctx, r: Request) => Promise<Response>;
+        }
+      )._handler(ctx, new Request(`https://app.convex.site${path}`));
+
+      expect(response.status).toBe(status);
+    },
+  );
 
   test("returns a non-cacheable 503 setup page before the first upload", async () => {
     const handler = staticHandler();
@@ -272,6 +303,219 @@ describe("registerStaticRoutes", () => {
     expect(response.headers.get("Location")).toBe(
       "https://cdn.example/blobs/blob-1",
     );
+  });
+});
+
+describe("serveStaticAsset", () => {
+  type ServeCtx = Parameters<typeof serveStaticAsset>[0];
+
+  function serveCtx(
+    runQuery: ReturnType<typeof vi.fn>,
+    storageGet: ReturnType<typeof vi.fn> = vi.fn(),
+  ) {
+    return { runQuery, storage: { get: storageGet } } as unknown as ServeCtx;
+  }
+
+  test("serves an exact file with the registerStaticRoutes headers", async () => {
+    const runQuery = vi.fn().mockResolvedValue({
+      storageUrl: "https://storage.example/app",
+      contentType: "application/javascript; charset=utf-8",
+      etag: '"storage-id"',
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("app()")));
+
+    const response = await serveStaticAsset(
+      serveCtx(runQuery),
+      components.staticHosting,
+      new Request("https://app.convex.site/assets/app-B71cUw87.js"),
+    );
+
+    expect(runQuery).toHaveBeenCalledWith(
+      components.staticHosting.lib.resolveAssetForHttp,
+      { path: "/assets/app-B71cUw87.js", spaFallback: false },
+    );
+    expect(response?.status).toBe(200);
+    expect(response?.headers.get("Cache-Control")).toBe(
+      "public, max-age=31536000, immutable",
+    );
+    expect(response?.headers.get("ETag")).toBe('"storage-id"');
+    expect(response?.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(await response?.text()).toBe("app()");
+  });
+
+  test("returns null instead of a setup page or 404", async () => {
+    const runQuery = vi.fn().mockResolvedValue(null);
+
+    for (const url of ["/", "/missing.js", "/dashboard"]) {
+      const response = await serveStaticAsset(
+        serveCtx(runQuery),
+        components.staticHosting,
+        new Request(`https://app.convex.site${url}`),
+      );
+      expect(response).toBeNull();
+    }
+    // An exact lookup: `/` is not mapped to `/index.html`.
+    expect(runQuery).toHaveBeenCalledWith(
+      components.staticHosting.lib.resolveAssetForHttp,
+      { path: "/", spaFallback: false },
+    );
+  });
+
+  test("serves the SPA shell only for an explicit path", async () => {
+    const runQuery = vi.fn().mockResolvedValue({
+      storageUrl: "https://storage.example/index",
+      contentType: "text/html; charset=utf-8",
+      etag: '"index-id"',
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("<div id=root>")),
+    );
+
+    const response = await serveStaticAsset(
+      serveCtx(runQuery),
+      components.staticHosting,
+      new Request("https://app.convex.site/dashboard/settings"),
+      { path: "/index.html" },
+    );
+
+    expect(runQuery).toHaveBeenCalledWith(
+      components.staticHosting.lib.resolveAssetForHttp,
+      { path: "/index.html", spaFallback: false },
+    );
+    expect(response?.status).toBe(200);
+    expect(response?.headers.get("Cache-Control")).toBe(
+      "public, max-age=0, must-revalidate",
+    );
+  });
+
+  test("forwards an explicit SPA fallback opt-in", async () => {
+    const runQuery = vi.fn().mockResolvedValue(null);
+
+    await serveStaticAsset(
+      serveCtx(runQuery),
+      components.staticHosting,
+      new Request("https://app.convex.site/dashboard"),
+      { spaFallback: true },
+    );
+
+    expect(runQuery).toHaveBeenCalledWith(
+      components.staticHosting.lib.resolveAssetForHttp,
+      { path: "/dashboard", spaFallback: true },
+    );
+  });
+
+  test("returns null for malformed percent-encoding without querying", async () => {
+    const runQuery = vi.fn();
+
+    const response = await serveStaticAsset(
+      serveCtx(runQuery),
+      components.staticHosting,
+      new Request("https://app.convex.site/caf%E9"),
+    );
+
+    expect(response).toBeNull();
+    expect(runQuery).not.toHaveBeenCalled();
+  });
+
+  test("rejects a path without a leading slash", async () => {
+    await expect(
+      serveStaticAsset(
+        serveCtx(vi.fn()),
+        components.staticHosting,
+        new Request("https://app.convex.site/about"),
+        { path: "about/index.html" },
+      ),
+    ).rejects.toThrow("path must start with /");
+  });
+
+  test("keeps ETag revalidation and CDN redirects", async () => {
+    const runQuery = vi
+      .fn()
+      .mockResolvedValueOnce({
+        storageUrl: "https://storage.example/app",
+        contentType: "application/javascript; charset=utf-8",
+        etag: '"storage-id"',
+      })
+      .mockResolvedValueOnce({
+        blobId: "blob-1",
+        contentType: "application/javascript; charset=utf-8",
+      });
+
+    const revalidated = await serveStaticAsset(
+      serveCtx(runQuery),
+      components.staticHosting,
+      new Request("https://app.convex.site/app.js", {
+        headers: { "If-None-Match": '"storage-id"' },
+      }),
+    );
+    const redirected = await serveStaticAsset(
+      serveCtx(runQuery),
+      components.staticHosting,
+      new Request("https://app.convex.site/app-HASHED1.js"),
+      { cdnBaseUrl: "https://cdn.example/blobs/" },
+    );
+
+    expect(revalidated?.status).toBe(304);
+    expect(redirected?.status).toBe(302);
+    expect(redirected?.headers.get("Location")).toBe(
+      "https://cdn.example/blobs/blob-1",
+    );
+  });
+
+  test("returns null for an inherited v1 file missing from app storage", async () => {
+    const runQuery = vi.fn().mockResolvedValue({
+      appStorageId: "deleted-storage-id",
+      contentType: "application/javascript; charset=utf-8",
+      etag: '"deleted-storage-id"',
+    });
+    const storageGet = vi.fn().mockResolvedValue(null);
+
+    const response = await serveStaticAsset(
+      serveCtx(runQuery, storageGet),
+      components.staticHosting,
+      new Request("https://app.convex.site/legacy.js"),
+    );
+
+    expect(storageGet).toHaveBeenCalledWith("deleted-storage-id");
+    expect(response).toBeNull();
+  });
+
+  test("lets an app action fall through to its own rendering", async () => {
+    const render = vi.fn(
+      async (request: Request) =>
+        new Response(`rendered ${new URL(request.url).pathname}`),
+    );
+    const handler = httpActionGeneric(async (ctx, request) => {
+      const file = await serveStaticAsset(
+        ctx,
+        components.staticHosting,
+        request,
+      );
+      if (file) return file;
+      const path = decodeRequestPath(new URL(request.url).pathname);
+      if (path === null || path.startsWith("/assets/")) {
+        return new Response("Not Found", { status: 404 });
+      }
+      return await render(request);
+    });
+    const runQuery = vi.fn().mockResolvedValue(null);
+
+    const page = await invokeHandler(
+      handler,
+      runQuery,
+      new Request("https://app.convex.site/about"),
+    );
+    // An encoded `/assets/` path is still a missing asset, not a page.
+    const staleAsset = await invokeHandler(
+      handler,
+      runQuery,
+      new Request("https://app.convex.site/%61ssets/app-OLDHASH.js"),
+    );
+
+    expect(await page.text()).toBe("rendered /about");
+    expect(staleAsset.status).toBe(404);
+    expect(render).toHaveBeenCalledTimes(1);
   });
 });
 
